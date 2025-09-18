@@ -1,0 +1,60 @@
+# Byte-compiled / cache
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+**/.venv/
+venv/
+**/venv/
+env/
+**/env/
+
+# OS / Editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Large data / artifacts
+results/
+**/results/
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.gz
+*.rar
+
+# Model/artifact files
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.onnx
+*.pb
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Misc
+*.bak
+*.tmp
+*.temp
+
+# Optional: media
+# *.mp4
+# *.avi
+# *.mov
+# *.mkv
+
+# Optional: CSVs
+# *.csv
