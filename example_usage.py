@@ -27,7 +27,7 @@ def example_single_agent_training():
     print("=" * 60)
     
     # Create environment
-    env = SUMOTrafficEnvironment("sumo_configs/intersection.sumocfg", gui=False)
+    env = SUMOTrafficEnvironment("sumo_configs2/osm.sumocfg", gui=False)
     
     # Create agent
     agent = DQNAgent(state_size=env.state_size, action_size=env.action_size)
@@ -111,9 +111,9 @@ def example_federated_learning():
     # Create multiple clients
     clients = []
     client_configs = [
-        {"id": "intersection_1", "config": "sumo_configs/intersection.sumocfg"},
-        {"id": "intersection_2", "config": "sumo_configs/intersection.sumocfg"},
-        {"id": "intersection_3", "config": "sumo_configs/intersection.sumocfg"}
+        {"id": "intersection_1", "config": "sumo_configs2/osm.sumocfg"},
+        {"id": "intersection_2", "config": "sumo_configs2/osm.sumocfg"},
+        {"id": "intersection_3", "config": "sumo_configs2/osm.sumocfg"}
     ]
     
     for config in client_configs:
@@ -227,7 +227,7 @@ def example_performance_comparison():
         print(f"Testing learning rate: {lr}")
         
         # Create environment and agent
-        env = SUMOTrafficEnvironment("sumo_configs/intersection.sumocfg", gui=False)
+        env = SUMOTrafficEnvironment("sumo_configs2/osm.sumocfg", gui=False)
         agent = DQNAgent(state_size=env.state_size, action_size=env.action_size, learning_rate=lr)
         
         # Training

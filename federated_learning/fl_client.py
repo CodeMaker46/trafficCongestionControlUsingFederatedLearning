@@ -1,5 +1,4 @@
 import numpy as np
-import tensorflow as tf
 from typing import Dict, List, Tuple, Optional
 import flwr as fl
 from agents.dqn_agent import DQNAgent
@@ -15,8 +14,8 @@ class TrafficFLClient(fl.client.NumPyClient):
     """
     
     def __init__(self, client_id: str, sumo_config_path: str, 
-                 state_size: int = 4, action_size: int = 4,
-                 gui: bool = False):
+                 state_size: int = 12, action_size: int = 4,
+                 gui: bool = False, show_phase_console: bool = False):
         self.client_id = client_id
         self.state_size = state_size
         self.action_size = action_size
@@ -25,7 +24,7 @@ class TrafficFLClient(fl.client.NumPyClient):
         self.agent = DQNAgent(state_size, action_size)
         
         # Initialize traffic environment
-        self.env = SUMOTrafficEnvironment(sumo_config_path, gui=gui)
+        self.env = SUMOTrafficEnvironment(sumo_config_path, gui=gui, show_phase_console=show_phase_console)
         
         # Training parameters
         self.episodes_per_round = 10

@@ -37,6 +37,7 @@ if __name__ == "__main__":
     parser.add_argument("--sumo-config", type=str, required=True, help="Path to SUMO config")
     parser.add_argument("--server-address", type=str, default="localhost:8080", help="Server address")
     parser.add_argument("--gui", action="store_true", help="Enable SUMO GUI")
+    parser.add_argument("--show-phase-console", action="store_true", help="Print TLS phase/time each step")
     args = parser.parse_args()
     
     # Create client
@@ -70,21 +71,21 @@ def run_server(num_rounds=10, min_clients=2, server_address="localhost:8080"):
         num_rounds=num_rounds,
         min_clients=min_clients,
         min_fit_clients=min_clients,
-        min_evaluate_clients=min_clients
+        min_eval_clients=min_clients
     )
     
     # Run server
     server.run_federated_learning(server_address)
 
-def run_single_client_training(args=None):
+def run_single_client_training():
     """Run training with a single client for testing"""
     print("Running single client training for testing...")
     
     # Create client
     client = TrafficFLClient(
         client_id="test_client",
-        sumo_config_path="osm_sumo_configs/osm.sumocfg",
-        gui=(getattr(args, 'gui', False) if args is not None else False)
+        sumo_config_path="sumo_configs2/osm.sumocfg",
+        gui=False
     )
     
     # Simulate federated learning rounds
@@ -120,17 +121,16 @@ def run_single_client_training(args=None):
     print("\nSingle client training completed!")
     print("Results saved to results/ directory")
 
-def run_multi_client_simulation(args=None):
+def run_multi_client_simulation():
     """Run simulation with multiple clients"""
     print("Running multi-client simulation...")
     
     # Create multiple clients with different configurations
     clients = []
-    want_gui = getattr(args, 'gui', False) if args is not None else False
     client_configs = [
-        {"id": "client_1", "config": "osm_sumo_configs/osm.sumocfg", "gui": want_gui},
-        {"id": "client_2", "config": "osm_sumo_configs/osm.sumocfg", "gui": want_gui},
-        {"id": "client_3", "config": "osm_sumo_configs/osm.sumocfg", "gui": want_gui}
+        {"id": "client_1", "config": "sumo_configs2/osm.sumocfg", "gui": False},
+        {"id": "client_2", "config": "sumo_configs2/osm.sumocfg", "gui": False},
+        {"id": "client_3", "config": "sumo_configs2/osm.sumocfg", "gui": False}
     ]
     
     for config in client_configs:
@@ -205,7 +205,7 @@ def main():
     parser.add_argument("--mode", choices=["server", "client", "single", "multi"], 
                        default="single", help="Run mode")
     parser.add_argument("--client-id", type=str, help="Client ID (for client mode)")
-    parser.add_argument("--sumo-config", type=str, default="osm_sumo_configs/osm.sumocfg",
+    parser.add_argument("--sumo-config", type=str, default="sumo_configs2/osm.sumocfg",
                        help="Path to SUMO config")
     parser.add_argument("--server-address", type=str, default="localhost:8080",
                        help="Server address")
@@ -228,7 +228,8 @@ def main():
         client = TrafficFLClient(
             client_id=args.client_id,
             sumo_config_path=args.sumo_config,
-            gui=args.gui
+            gui=args.gui,
+            show_phase_console=args.show_phase_console
         )
         
         fl.client.start_numpy_client(
@@ -236,9 +237,9 @@ def main():
             client=client
         )
     elif args.mode == "single":
-        run_single_client_training(args)
+        run_single_client_training()
     elif args.mode == "multi":
-        run_multi_client_simulation(args)
+        run_multi_client_simulation()
     
     print("Training completed!")
 

@@ -95,13 +95,13 @@ On client machines (or same machine in different terminals):
 
 ```bash
 # Client 1
-python client.py --client-id client_1 --sumo-config osm_sumo_configs/osm.sumocfg
+   python client.py --client-id client_1 --sumo-config sumo_configs2/osm.sumocfg
 
 # Client 2
-python client.py --client-id client_2 --sumo-config osm_sumo_configs/osm.sumocfg
+   python client.py --client-id client_2 --sumo-config sumo_configs2/osm.sumocfg
 
 # Client 3
-python client.py --client-id client_3 --sumo-config osm_sumo_configs/osm.sumocfg
+   python client.py --client-id client_3 --sumo-config sumo_configs2/osm.sumocfg
 ```
 
 ### With SUMO GUI
@@ -116,11 +116,11 @@ python train_federated.py --mode single --gui
 
 ### SUMO Configuration
 
-The traffic simulation can be configured with either the static `sumo_configs/` or dynamic OSM-based `osm_sumo_configs/`:
+The traffic simulation can use configs from `sumo_configs/` or OSM-based files in `sumo_configs2/`. By default, examples reference `sumo_configs2/osm.sumocfg`.
 
-- `osm_sumo_configs/osm.net.xml.gz`: Network generated from OSM
-- `osm_sumo_configs/osm.passenger.trips.xml`: Trips/routes from OSM
-- `osm_sumo_configs/osm.sumocfg`: Main SUMO configuration for OSM data
+- `intersection.net.xml`: Network topology (intersections, roads, lanes)
+- `intersection.rou.xml`: Vehicle routes and traffic flows
+- `intersection.sumocfg`: Main SUMO configuration
 
 ### Training Parameters
 

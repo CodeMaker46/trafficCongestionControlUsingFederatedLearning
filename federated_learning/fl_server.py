@@ -13,11 +13,11 @@ class TrafficFLServer:
     """
     
     def __init__(self, num_rounds: int = 10, min_clients: int = 2, 
-                 min_fit_clients: int = 2, min_evaluate_clients: int = 2):
+                 min_fit_clients: int = 2, min_eval_clients: int = 2):
         self.num_rounds = num_rounds
         self.min_clients = min_clients
         self.min_fit_clients = min_fit_clients
-        self.min_evaluate_clients = min_evaluate_clients
+        self.min_eval_clients = min_eval_clients
         
         # Server state
         self.current_round = 0
@@ -155,7 +155,7 @@ class TrafficFLServer:
         strategy = fl.server.strategy.FedAvg(
             min_available_clients=self.min_clients,
             min_fit_clients=self.min_fit_clients,
-            min_evaluate_clients=self.min_evaluate_clients,
+            min_evaluate_clients=self.min_eval_clients,
             on_fit_config_fn=self.get_fit_config,
             on_evaluate_config_fn=self.get_eval_config,
         )

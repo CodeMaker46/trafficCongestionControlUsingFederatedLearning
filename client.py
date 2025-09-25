@@ -13,6 +13,7 @@ if __name__ == "__main__":
     parser.add_argument("--sumo-config", type=str, required=True, help="Path to SUMO config")
     parser.add_argument("--server-address", type=str, default="localhost:8080", help="Server address")
     parser.add_argument("--gui", action="store_true", help="Enable SUMO GUI")
+    parser.add_argument("--show-phase-console", action="store_true", help="Print TLS phase/time each step")
     args = parser.parse_args()
     
     # Create client
