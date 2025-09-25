@@ -76,7 +76,7 @@ def run_server(num_rounds=10, min_clients=2, server_address="localhost:8080"):
     # Run server
     server.run_federated_learning(server_address)
 
-def run_single_client_training():
+def run_single_client_training(args=None):
     """Run training with a single client for testing"""
     print("Running single client training for testing...")
     
@@ -84,7 +84,7 @@ def run_single_client_training():
     client = TrafficFLClient(
         client_id="test_client",
         sumo_config_path="osm_sumo_configs/osm.sumocfg",
-        gui=False
+        gui=(getattr(args, 'gui', False) if args is not None else False)
     )
     
     # Simulate federated learning rounds
@@ -120,16 +120,17 @@ def run_single_client_training():
     print("\nSingle client training completed!")
     print("Results saved to results/ directory")
 
-def run_multi_client_simulation():
+def run_multi_client_simulation(args=None):
     """Run simulation with multiple clients"""
     print("Running multi-client simulation...")
     
     # Create multiple clients with different configurations
     clients = []
+    want_gui = getattr(args, 'gui', False) if args is not None else False
     client_configs = [
-        {"id": "client_1", "config": "osm_sumo_configs/osm.sumocfg", "gui": False},
-        {"id": "client_2", "config": "osm_sumo_configs/osm.sumocfg", "gui": False},
-        {"id": "client_3", "config": "osm_sumo_configs/osm.sumocfg", "gui": False}
+        {"id": "client_1", "config": "osm_sumo_configs/osm.sumocfg", "gui": want_gui},
+        {"id": "client_2", "config": "osm_sumo_configs/osm.sumocfg", "gui": want_gui},
+        {"id": "client_3", "config": "osm_sumo_configs/osm.sumocfg", "gui": want_gui}
     ]
     
     for config in client_configs:
@@ -235,9 +236,9 @@ def main():
             client=client
         )
     elif args.mode == "single":
-        run_single_client_training()
+        run_single_client_training(args)
     elif args.mode == "multi":
-        run_multi_client_simulation()
+        run_multi_client_simulation(args)
     
     print("Training completed!")
 
