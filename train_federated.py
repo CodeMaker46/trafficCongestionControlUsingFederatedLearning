@@ -77,7 +77,7 @@ def run_server(num_rounds=10, min_clients=2, server_address="localhost:8080"):
     # Run server
     server.run_federated_learning(server_address)
 
-def run_single_client_training():
+def run_single_client_training(gui: bool = False, show_phase_console: bool = False):
     """Run training with a single client for testing"""
     print("Running single client training for testing...")
     
@@ -85,7 +85,9 @@ def run_single_client_training():
     client = TrafficFLClient(
         client_id="test_client",
         sumo_config_path="sumo_configs2/osm.sumocfg",
-        gui=False
+        gui=gui,
+        show_phase_console=show_phase_console,
+        show_gst_gui=gui
     )
     
     # Simulate federated learning rounds
@@ -109,7 +111,24 @@ def run_single_client_training():
         eval_metrics = client.evaluate(updated_params, config)
         
         print(f"Training Metrics: {metrics}")
-        print(f"Evaluation Metrics: {eval_metrics[2]}")
+        # Print GST explicitly
+        gst = eval_metrics[2].get('green_signal_time', {})
+        print("Evaluation Metrics:")
+        print(f"  average_reward: {eval_metrics[2].get('average_reward', 0):.4f}")
+        print(f"  waiting_time: {eval_metrics[2].get('waiting_time', 0):.2f}")
+        print(f"  queue_length: {eval_metrics[2].get('queue_length', 0):.2f}")
+        try:
+            avg_gst = gst.get('avg_gst', 0.0)
+            num_lanes = gst.get('num_lanes', 0)
+            print(f"  GST avg_gst(s): {avg_gst:.2f} over {num_lanes} lanes")
+            per_edge = gst.get('per_edge', {})
+            if per_edge:
+                for edge_id, val in per_edge.items():
+                    print(f"    GST[{edge_id}]= {float(val):.2f}s")
+            else:
+                print("    GST per_edge: {}")
+        except Exception:
+            print("  GST: unavailable")
         
         # Update client parameters
         client.set_parameters(updated_params)
@@ -212,6 +231,7 @@ def main():
     parser.add_argument("--num-rounds", type=int, default=10, help="Number of rounds")
     parser.add_argument("--min-clients", type=int, default=2, help="Minimum clients")
     parser.add_argument("--gui", action="store_true", help="Enable SUMO GUI")
+    parser.add_argument("--show-phase-console", action="store_true", help="Print TLS phase/time each step")
     
     args = parser.parse_args()
     
@@ -237,7 +257,7 @@ def main():
             client=client
         )
     elif args.mode == "single":
-        run_single_client_training()
+        run_single_client_training(gui=args.gui, show_phase_console=args.show_phase_console)
     elif args.mode == "multi":
         run_multi_client_simulation()
     

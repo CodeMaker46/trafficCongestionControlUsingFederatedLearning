@@ -15,7 +15,7 @@ class TrafficFLClient(fl.client.NumPyClient):
     
     def __init__(self, client_id: str, sumo_config_path: str, 
                  state_size: int = 12, action_size: int = 4,
-                 gui: bool = False, show_phase_console: bool = False):
+                 gui: bool = False, show_phase_console: bool = False, show_gst_gui: bool = False):
         self.client_id = client_id
         self.state_size = state_size
         self.action_size = action_size
@@ -24,7 +24,7 @@ class TrafficFLClient(fl.client.NumPyClient):
         self.agent = DQNAgent(state_size, action_size)
         
         # Initialize traffic environment
-        self.env = SUMOTrafficEnvironment(sumo_config_path, gui=gui, show_phase_console=show_phase_console)
+        self.env = SUMOTrafficEnvironment(sumo_config_path, gui=gui, show_phase_console=show_phase_console, show_gst_gui=show_gst_gui)
         
         # Training parameters
         self.episodes_per_round = 10
@@ -178,7 +178,8 @@ class TrafficFLClient(fl.client.NumPyClient):
             'total_steps': total_steps,
             'waiting_time': performance['total_waiting_time'],
             'queue_length': performance['average_queue_length'],
-            'max_queue_length': performance['max_queue_length']
+            'max_queue_length': performance['max_queue_length'],
+            'green_signal_time': performance.get('green_signal_time', {})
         }
     
     def save_training_history(self, filepath: str):

@@ -11,15 +11,18 @@ class SUMOTrafficEnvironment:
     Traffic environment that interfaces with SUMO for realistic traffic simulation
     """
     
-    def __init__(self, sumo_config_path: str, gui: bool = False, tl_id: Optional[str] = None, show_phase_console: bool = False):
+    def __init__(self, sumo_config_path: str, gui: bool = False, tl_id: Optional[str] = None, show_phase_console: bool = False, show_gst_gui: bool = False):
         self.sumo_config_path = sumo_config_path
         self.gui = gui
         self.show_phase_console = show_phase_console
+        self.show_gst_gui = show_gst_gui
         self.episode_count = 0
         self.step_count = 0
         self.max_steps = 1000
         self.min_phase_duration_s: float = 5.0
+        self.yellow_duration_s: float = 3.0
         self.last_phase_switch_time: float = 0.0
+        self._pending_target_phase: Optional[int] = None
         
         # Traffic light phases: 0=EW_Green, 1=EW_Yellow, 2=NS_Green, 3=NS_Yellow
         self.phases = {
@@ -42,6 +45,26 @@ class SUMOTrafficEnvironment:
         self.total_waiting_time = 0
         self.total_vehicles = 0
         self.queue_lengths = []
+        # Keep GST snapshots for analysis and saving
+        self.gst_history: List[Dict] = []
+        self._gst_poi_ids: Dict[str, str] = {}
+        # Parameters for Green Signal Time (GST) computation
+        # avg crossing time per vehicle class (seconds) and startup time per vehicle
+        # The mapping keys follow SUMO classes grouped to paper categories
+        self.class_avg_time_s: Dict[str, float] = {
+            'car': 2.0,
+            'truck': 3.5,
+            'bus': 3.5,
+            'motorcycle': 1.5,
+            'bicycle': 2.0
+        }
+        self.class_startup_time_s: Dict[str, float] = {
+            'car': 0.7,
+            'truck': 1.2,
+            'bus': 1.2,
+            'motorcycle': 0.5,
+            'bicycle': 0.6
+        }
         
     def start_simulation(self):
         """Start SUMO simulation"""
@@ -92,6 +115,18 @@ class SUMOTrafficEnvironment:
                         seen.add(e)
                         ordered_unique.append(e)
                 self.incoming_edges = ordered_unique[:4]
+                # Map one representative lane for each incoming edge for GUI placement
+                self._edge_to_lane: Dict[str, str] = {}
+                for conn_group in links:
+                    for conn in conn_group:
+                        if conn and len(conn) >= 1:
+                            lane_id = conn[0]
+                            try:
+                                edge_id = traci.lane.getEdgeID(lane_id)
+                                if edge_id in self.incoming_edges and edge_id not in self._edge_to_lane:
+                                    self._edge_to_lane[edge_id] = lane_id
+                            except Exception:
+                                pass
 
                 # Discover number of phases from program logic
                 try:
@@ -114,6 +149,7 @@ class SUMOTrafficEnvironment:
         self.total_waiting_time = 0
         self.total_vehicles = 0
         self.queue_lengths = []
+        self._setup_gst_gui_pois()
         
     def stop_simulation(self):
         """Stop SUMO simulation"""
@@ -175,6 +211,148 @@ class SUMOTrafficEnvironment:
             return traci.edge.getWaitingTime(edge_id)
         except:
             return 0.0
+
+    def _map_vehicle_to_class(self, veh_id: str) -> str:
+        """Map SUMO vehicle to simplified class for GST calculation."""
+        try:
+            vclass = traci.vehicle.getVehicleClass(veh_id)
+        except Exception:
+            try:
+                type_id = traci.vehicle.getTypeID(veh_id)
+                vclass = traci.vehicletype.getVehicleClass(type_id)
+            except Exception:
+                vclass = 'passenger'
+        # Normalize to our buckets
+        if vclass in ('passenger', 'emergency', 'taxi'):  # cars
+            return 'car'
+        if vclass in ('truck', 'delivery'):  # heavy
+            return 'truck'
+        if vclass in ('bus', 'coach'):  # buses counted as heavy
+            return 'bus'
+        if vclass in ('motorcycle',):
+            return 'motorcycle'
+        if vclass in ('bicycle',):
+            return 'bicycle'
+        return 'car'
+
+    def _compute_green_signal_times(self) -> Dict:
+        """Compute Green Signal Time (GST) per incoming edge based on the paper formula.
+
+        For each incoming edge e, let count_c be number of vehicles of class c on e.
+        Adjusted time per class c: adj_c = avg_time_c + startup_time_c.
+        AllClassAverageTime for edge e is sum(count_c * adj_c) over classes.
+        GST_e = AllClassAverageTime / (num_lanes + 1), where num_lanes is the
+        number of incoming edges considered.
+        """
+        try:
+            edges = self.incoming_edges[:4]
+            num_lanes = max(1, len(edges))
+            gst_per_edge: Dict[str, float] = {}
+            for edge_id in edges:
+                if not edge_id:
+                    continue
+                vehicle_ids = []
+                try:
+                    vehicle_ids = traci.edge.getLastStepVehicleIDs(edge_id)
+                except Exception:
+                    vehicle_ids = []
+                # If edge-level query yields none (common with long edges), fall back to the
+                # controlled upstream lane closest to the junction.
+                if not vehicle_ids:
+                    lane_id = getattr(self, '_edge_to_lane', {}).get(edge_id, None)
+                    if lane_id:
+                        try:
+                            vehicle_ids = traci.lane.getLastStepVehicleIDs(lane_id)
+                        except Exception:
+                            vehicle_ids = []
+                class_counts: Dict[str, int] = {}
+                for vid in vehicle_ids:
+                    cls = self._map_vehicle_to_class(vid)
+                    class_counts[cls] = class_counts.get(cls, 0) + 1
+
+                all_class_time = 0.0
+                for cls, cnt in class_counts.items():
+                    avg_t = self.class_avg_time_s.get(cls, 2.0)
+                    start_t = self.class_startup_time_s.get(cls, 0.7)
+                    all_class_time += float(cnt) * (avg_t + start_t)
+
+                gst = all_class_time / (num_lanes + 1.0)
+                gst_per_edge[edge_id] = float(gst)
+
+            # Aggregate statistics
+            avg_gst = float(np.mean(list(gst_per_edge.values()))) if gst_per_edge else 0.0
+            snapshot = {
+                'per_edge': gst_per_edge,
+                'avg_gst': avg_gst,
+                'num_lanes': num_lanes
+            }
+            # Record for history with current sim time
+            try:
+                snapshot_with_time = dict(snapshot)
+                snapshot_with_time['time'] = float(traci.simulation.getTime())
+                self.gst_history.append(snapshot_with_time)
+                # Keep history bounded
+                if len(self.gst_history) > 2000:
+                    self.gst_history = self.gst_history[-2000:]
+            except Exception:
+                pass
+            return snapshot
+        except Exception as e:
+            print(f"Error computing GST: {e}")
+            return {'per_edge': {}, 'avg_gst': 0.0, 'num_lanes': 0}
+
+    def _setup_gst_gui_pois(self):
+        """Create POIs in the GUI to display GST values near incoming lanes."""
+        if not (self.gui and self.show_gst_gui and self.tl_id and self.incoming_edges):
+            return
+        try:
+            for edge_id in self.incoming_edges:
+                lane_id = getattr(self, '_edge_to_lane', {}).get(edge_id, None)
+                if not lane_id:
+                    continue
+                try:
+                    shape = traci.lane.getShape(lane_id)
+                    # Use the first point on the lane as placement
+                    x, y = shape[0]
+                except Exception:
+                    # Fallback: junction center
+                    pos = traci.junction.getPosition(self.tl_id)
+                    x, y = pos[0], pos[1]
+                poi_id = f"gst_{edge_id}"
+                # Remove if exists
+                try:
+                    traci.poi.remove(poi_id)
+                except Exception:
+                    pass
+                try:
+                    traci.poi.add(poi_id, x, y, (0, 255, 0, 255), name=f"GST {edge_id}: --s")
+                except Exception:
+                    # Some SUMO versions require fewer args
+                    traci.poi.add(poi_id, x, y)
+                self._gst_poi_ids[edge_id] = poi_id
+        except Exception:
+            pass
+
+    def _update_gst_gui_labels(self, gst_snapshot: Dict):
+        if not (self.gui and self.show_gst_gui):
+            return
+        try:
+            per_edge = gst_snapshot.get('per_edge', {})
+            for edge_id, val in per_edge.items():
+                poi_id = self._gst_poi_ids.get(edge_id)
+                if not poi_id:
+                    continue
+                label = f"GST {edge_id[-6:]}: {float(val):.1f}s"
+                try:
+                    traci.poi.setParameter(poi_id, "name", label)
+                except Exception:
+                    # If parameter not supported, try color intensity as cue
+                    v = float(val)
+                    r = int(max(0, min(255, 40 + 10 * v)))
+                    g = int(max(0, 255 - 5 * v))
+                    traci.poi.setColor(poi_id, (r, g, 0, 255))
+        except Exception:
+            pass
     
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict]:
         """Execute action and return next state, reward, done, info"""
@@ -197,6 +375,17 @@ class SUMOTrafficEnvironment:
             
             # Collect info
             phase_info = self.get_current_phase_info()
+            # Compute GST and optionally print/overlay each step
+            gst_snapshot = self._compute_green_signal_times()
+            if self.show_phase_console:
+                try:
+                    per_edge = gst_snapshot.get('per_edge', {})
+                    items = [{ 'lane': e, 'gst': round(float(v), 2) } for e, v in per_edge.items()]
+                    if items:
+                        print(f"[GST] {items} avg={gst_snapshot.get('avg_gst', 0.0):.2f}s")
+                except Exception:
+                    pass
+            self._update_gst_gui_labels(gst_snapshot)
             if self.show_phase_console and phase_info:
                 print(f"[TLS {self.tl_id}] phase={phase_info.get('phase')} remaining={phase_info.get('remaining_s'):.1f}s/{phase_info.get('duration_s'):.1f}s")
 
@@ -208,6 +397,32 @@ class SUMOTrafficEnvironment:
             }
             if phase_info:
                 info['phase'] = phase_info
+            # Attach GST snapshot for this step
+            info['gst'] = gst_snapshot
+
+            # Adaptive green extension to reduce long queues/waits
+            try:
+                if phase_info:
+                    phase_idx = int(phase_info.get('phase', -1))
+                    remaining = float(phase_info.get('remaining_s', 0.0))
+                    # Only extend during main green phases (0 and 2)
+                    if phase_idx in (0, 2) and remaining <= 0.5:
+                        # Use queue length across edges and GST average to compute extension
+                        queue_sum = 0
+                        for e in self.incoming_edges:
+                            queue_sum += self._get_queue_length(e)
+                        # Base on average GST plus small factor of queue size
+                        base = float(gst_snapshot.get('avg_gst', 0.0))
+                        # More aggressive extension for large queues
+                        extension = base + 0.5 * queue_sum
+                        extension = max(0.0, min(20.0, extension))
+                        if extension > 0.5:
+                            try:
+                                traci.trafficlight.setPhaseDuration(self.tl_id, remaining + extension)
+                            except Exception:
+                                pass
+            except Exception:
+                pass
             
             return next_state, reward, done, info
             
@@ -227,15 +442,56 @@ class SUMOTrafficEnvironment:
                 current = traci.trafficlight.getPhase(self.tl_id)
             except Exception:
                 current = -1
-            # Enforce a minimum green time to reduce sudden stops/collisions
-            if desired != current:
-                if sim_time - self.last_phase_switch_time >= self.min_phase_duration_s:
-                    traci.trafficlight.setPhase(self.tl_id, desired)
+            # Safe switching with yellow insertion when crossing directions
+            def is_green(p: int) -> bool:
+                return p in (0, 2)
+
+            def yellow_for_transition(src: int, dst: int) -> Optional[int]:
+                if src == 0 and dst == 2:
+                    return 1  # EW -> yellow
+                if src == 2 and dst == 0:
+                    return 3  # NS -> yellow
+                # If transitioning between same corridor or to yellow itself, none
+                return None
+
+            # If a pending target exists, try to complete it once yellow finished
+            if self._pending_target_phase is not None:
+                remaining = 0.0
+                try:
+                    next_switch = traci.trafficlight.getNextSwitch(self.tl_id)
+                    remaining = max(0.0, next_switch - sim_time)
+                except Exception:
+                    pass
+                if remaining <= 0.1:
+                    traci.trafficlight.setPhase(self.tl_id, self._pending_target_phase)
                     try:
                         traci.trafficlight.setPhaseDuration(self.tl_id, self.min_phase_duration_s)
                     except Exception:
                         pass
                     self.last_phase_switch_time = sim_time
+                    self._pending_target_phase = None
+                return
+
+            # Enforce a minimum green time before initiating a new switch
+            if desired != current and (sim_time - self.last_phase_switch_time) >= self.min_phase_duration_s:
+                if is_green(current) and is_green(desired) and current != desired:
+                    y = yellow_for_transition(current, desired)
+                    if y is not None:
+                        traci.trafficlight.setPhase(self.tl_id, y)
+                        try:
+                            traci.trafficlight.setPhaseDuration(self.tl_id, self.yellow_duration_s)
+                        except Exception:
+                            pass
+                        self.last_phase_switch_time = sim_time
+                        self._pending_target_phase = desired
+                        return
+                # Direct set when not crossing conflicting greens
+                traci.trafficlight.setPhase(self.tl_id, desired)
+                try:
+                    traci.trafficlight.setPhaseDuration(self.tl_id, self.min_phase_duration_s)
+                except Exception:
+                    pass
+                self.last_phase_switch_time = sim_time
         except Exception as e:
             print(f"Error setting traffic light phase: {e}")
     
@@ -257,15 +513,20 @@ class SUMOTrafficEnvironment:
             self.total_vehicles += vehs
             self.queue_lengths.append(queues)
             
-            # Reward function: minimize waiting time and queue length
-            # Negative reward for high waiting times and queue lengths
-            waiting_penalty = -waits / 200.0
-            queue_penalty = -queues / 10.0
+            # Reward function: minimize waiting time, queue length, and GST
+            # Stronger penalties to push the policy to reduce queues quickly
+            waiting_penalty = -waits / 100.0
+            queue_penalty = -queues / 6.0
+            try:
+                gst_avg = float(self.gst_history[-1]['avg_gst']) if self.gst_history else 0.0
+            except Exception:
+                gst_avg = 0.0
+            gst_penalty = -gst_avg / 6.0
             
             # Small positive reward for keeping traffic flowing
             flow_reward = 1.0 if queues < 5 else 0.0
             
-            total_reward = waiting_penalty + queue_penalty + flow_reward
+            total_reward = waiting_penalty + queue_penalty + gst_penalty + flow_reward
             
             return total_reward
             
@@ -306,13 +567,30 @@ class SUMOTrafficEnvironment:
     
     def get_performance_metrics(self) -> Dict:
         """Get performance metrics for the current episode"""
-        return {
+        metrics = {
             'total_waiting_time': self.total_waiting_time,
             'total_vehicles': self.total_vehicles,
             'average_queue_length': np.mean(self.queue_lengths) if self.queue_lengths else 0,
             'max_queue_length': max(self.queue_lengths) if self.queue_lengths else 0,
             'steps': self.step_count
         }
+        # Attach GST aggregates
+        last_gst = self._compute_green_signal_times()
+        metrics['green_signal_time'] = last_gst
+        try:
+            # Compute per-edge average over history
+            per_edge_sums: Dict[str, float] = {}
+            per_edge_counts: Dict[str, int] = {}
+            for snap in self.gst_history:
+                for e, val in snap.get('per_edge', {}).items():
+                    per_edge_sums[e] = per_edge_sums.get(e, 0.0) + float(val)
+                    per_edge_counts[e] = per_edge_counts.get(e, 0) + 1
+            avg_per_edge = {e: (per_edge_sums[e] / max(1, per_edge_counts[e])) for e in per_edge_sums}
+            metrics['green_signal_time_avg_per_edge'] = avg_per_edge
+            metrics['green_signal_time_history'] = self.gst_history[-200:]
+        except Exception:
+            pass
+        return metrics
     
     def close(self):
         """Close the environment"""
