@@ -120,9 +120,6 @@ Artifacts saved to `results/` by training scripts (client histories, performance
 - Windows PowerShell tips: use separate commands (no `&&`). Inline Python via `python -c "..."`.
 - Protobuf conflicts: this repo pins TF 2.15 + `protobuf<4` + Flower 1.4. Do not upgrade TF beyond 2.15 unless you also upgrade Flower and adjust protobuf.
 
-## License
-
-MIT License (see `LICENSE` if present).
 
 ## Acknowledgments
 
