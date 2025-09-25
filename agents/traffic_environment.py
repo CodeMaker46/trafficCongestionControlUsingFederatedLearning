@@ -30,8 +30,10 @@ class SUMOTrafficEnvironment:
         self.state_size = 4
         self.action_size = 4  # 4 different phase actions
         
-        # Traffic light ID (assuming single intersection)
-        self.tl_id = "junction2"
+        # Traffic light ID (detected dynamically after SUMO starts)
+        self.tl_id = None
+        # Incoming edges controlled by the selected traffic light (derived dynamically)
+        self.incoming_edges: List[str] = []
         
         # Performance metrics
         self.total_waiting_time = 0
@@ -44,6 +46,8 @@ class SUMOTrafficEnvironment:
         sumo_cmd = [sumo_binary, "-c", self.sumo_config_path, "--no-step-log", "true"]
         
         traci.start(sumo_cmd)
+        # Initialize dynamic network entities (traffic light and edges)
+        self._init_network_entities()
         self.episode_count += 1
         self.step_count = 0
         self.total_waiting_time = 0
@@ -66,13 +70,20 @@ class SUMOTrafficEnvironment:
     def get_state(self) -> np.ndarray:
         """Get current state of the traffic environment"""
         try:
-            # Get queue lengths for each direction
-            ew_queue = self._get_queue_length("edge1") + self._get_queue_length("edge2")
-            ns_queue = self._get_queue_length("edge3") + self._get_queue_length("edge4")
+            # Dynamically split incoming edges into two groups to approximate EW/NS
+            if not self.incoming_edges:
+                all_edges = list(traci.edge.getIDList())
+                self.incoming_edges = [e for e in all_edges if not e.startswith(":")][:4]
+            group_a = self.incoming_edges[0::2]
+            group_b = self.incoming_edges[1::2]
+
+            # Get queue lengths for each group
+            ew_queue = sum(self._get_queue_length(e) for e in group_a)
+            ns_queue = sum(self._get_queue_length(e) for e in group_b)
             
-            # Get average waiting time for each direction
-            ew_waiting = self._get_waiting_time("edge1") + self._get_waiting_time("edge2")
-            ns_waiting = self._get_waiting_time("edge3") + self._get_waiting_time("edge4")
+            # Get waiting time for each group
+            ew_waiting = sum(self._get_waiting_time(e) for e in group_a)
+            ns_waiting = sum(self._get_waiting_time(e) for e in group_b)
             
             # Normalize state values
             state = np.array([
@@ -143,21 +154,32 @@ class SUMOTrafficEnvironment:
     def _set_traffic_light_phase(self, phase: int):
         """Set traffic light to specified phase"""
         try:
-            if phase in self.phases:
-                traci.trafficlight.setRedYellowGreenState(self.tl_id, self.phases[phase])
+            if self.tl_id is None:
+                return
+            # Use numeric phase indices compatible with the current program
+            num_phases = traci.trafficlight.getPhaseNumber(self.tl_id)
+            if num_phases and num_phases > 0:
+                traci.trafficlight.setPhase(self.tl_id, phase % num_phases)
         except Exception as e:
             print(f"Error setting traffic light phase: {e}")
     
     def _calculate_reward(self) -> float:
         """Calculate reward based on traffic performance"""
         try:
-            # Get current waiting times
-            ew_waiting = self._get_waiting_time("edge1") + self._get_waiting_time("edge2")
-            ns_waiting = self._get_waiting_time("edge3") + self._get_waiting_time("edge4")
+            # Use the same dynamic grouping as in get_state
+            if not self.incoming_edges:
+                all_edges = list(traci.edge.getIDList())
+                self.incoming_edges = [e for e in all_edges if not e.startswith(":")][:4]
+            group_a = self.incoming_edges[0::2]
+            group_b = self.incoming_edges[1::2]
+
+            # Current waiting times
+            ew_waiting = sum(self._get_waiting_time(e) for e in group_a)
+            ns_waiting = sum(self._get_waiting_time(e) for e in group_b)
             
-            # Get current queue lengths
-            ew_queue = self._get_queue_length("edge1") + self._get_queue_length("edge2")
-            ns_queue = self._get_queue_length("edge3") + self._get_queue_length("edge4")
+            # Current queue lengths
+            ew_queue = sum(self._get_queue_length(e) for e in group_a)
+            ns_queue = sum(self._get_queue_length(e) for e in group_b)
             
             # Update metrics
             self.total_waiting_time += ew_waiting + ns_waiting
@@ -189,6 +211,27 @@ class SUMOTrafficEnvironment:
             'max_queue_length': max(self.queue_lengths) if self.queue_lengths else 0,
             'steps': self.step_count
         }
+
+    def _init_network_entities(self) -> None:
+        """Detect traffic light and incoming edges dynamically from the loaded network."""
+        try:
+            # Detect a traffic light to control (pick the first if available)
+            tls = list(traci.trafficlight.getIDList())
+            self.tl_id = tls[0] if tls else None
+            self.incoming_edges = []
+            if self.tl_id is not None:
+                # Derive incoming edges from controlled lanes
+                lanes = traci.trafficlight.getControlledLanes(self.tl_id)
+                edge_ids: List[str] = []
+                for lane in lanes:
+                    # lane format: edgeId_laneIndex (e.g., "12345_0")
+                    edge_id = lane.split('_')[0]
+                    if not edge_id.startswith(':') and edge_id not in edge_ids:
+                        edge_ids.append(edge_id)
+                # Keep a small subset for state calculation stability
+                self.incoming_edges = edge_ids[:6] if edge_ids else []
+        except Exception as e:
+            print(f"Warning: failed to initialize network entities: {e}")
     
     def close(self):
         """Close the environment"""
