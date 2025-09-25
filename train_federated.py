@@ -70,7 +70,7 @@ def run_server(num_rounds=10, min_clients=2, server_address="localhost:8080"):
         num_rounds=num_rounds,
         min_clients=min_clients,
         min_fit_clients=min_clients,
-        min_eval_clients=min_clients
+        min_evaluate_clients=min_clients
     )
     
     # Run server
