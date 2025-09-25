@@ -157,7 +157,7 @@ class SUMOTrafficEnvironment:
             if self.tl_id is None:
                 return
             # Use numeric phase indices compatible with the current program
-            num_phases = traci.trafficlight.getPhaseNumber(self.tl_id)
+            num_phases = self._get_num_phases()
             if num_phases and num_phases > 0:
                 traci.trafficlight.setPhase(self.tl_id, phase % num_phases)
         except Exception as e:
@@ -232,6 +232,29 @@ class SUMOTrafficEnvironment:
                 self.incoming_edges = edge_ids[:6] if edge_ids else []
         except Exception as e:
             print(f"Warning: failed to initialize network entities: {e}")
+
+    def _get_num_phases(self) -> int:
+        """Return number of phases for current TLS, compatible with multiple TraCI versions."""
+        if self.tl_id is None:
+            return 0
+        try:
+            # Preferred approach: read complete RYG definition and count phases
+            definitions = traci.trafficlight.getCompleteRedYellowGreenDefinition(self.tl_id)
+            if definitions:
+                logic = definitions[0]
+                phases = getattr(logic, 'phases', None)
+                if phases is not None:
+                    return len(phases)
+        except Exception:
+            pass
+        # Fallback: try to advance and infer at least 1 phase exists
+        try:
+            current = traci.trafficlight.getPhase(self.tl_id)
+            traci.trafficlight.setPhase(self.tl_id, current)
+            # If this did not throw, assume at least one phase
+            return 4  # conservative default used for modulo; will be wrapped by actual controller
+        except Exception:
+            return 0
     
     def close(self):
         """Close the environment"""
