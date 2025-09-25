@@ -61,7 +61,7 @@ def test_traffic_environment():
         from agents.traffic_environment import SUMOTrafficEnvironment
         
         # Create environment
-        env = SUMOTrafficEnvironment("sumo_configs/intersection.sumocfg", gui=False)
+        env = SUMOTrafficEnvironment("osm_sumo_configs/osm.sumocfg", gui=False)
         
         # Test state space
         assert env.state_size == 4, "Invalid state size"
@@ -87,7 +87,7 @@ def test_federated_learning():
         # Test client creation
         client = TrafficFLClient(
             client_id="test_client",
-            sumo_config_path="sumo_configs/intersection.sumocfg",
+            sumo_config_path="osm_sumo_configs/osm.sumocfg",
             gui=False
         )
         assert client.client_id == "test_client", "Invalid client ID"
@@ -130,9 +130,9 @@ def test_sumo_configs():
     print("Testing SUMO configuration files...")
     try:
         config_files = [
-            "sumo_configs/intersection.net.xml",
-            "sumo_configs/intersection.rou.xml",
-            "sumo_configs/intersection.sumocfg"
+            "osm_sumo_configs/osm.net.xml.gz",
+            "osm_sumo_configs/osm.passenger.trips.xml",
+            "osm_sumo_configs/osm.sumocfg"
         ]
         
         for config_file in config_files:

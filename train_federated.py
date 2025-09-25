@@ -83,7 +83,7 @@ def run_single_client_training():
     # Create client
     client = TrafficFLClient(
         client_id="test_client",
-        sumo_config_path="sumo_configs/intersection.sumocfg",
+        sumo_config_path="osm_sumo_configs/osm.sumocfg",
         gui=False
     )
     
@@ -127,9 +127,9 @@ def run_multi_client_simulation():
     # Create multiple clients with different configurations
     clients = []
     client_configs = [
-        {"id": "client_1", "config": "sumo_configs/intersection.sumocfg", "gui": False},
-        {"id": "client_2", "config": "sumo_configs/intersection.sumocfg", "gui": False},
-        {"id": "client_3", "config": "sumo_configs/intersection.sumocfg", "gui": False}
+        {"id": "client_1", "config": "osm_sumo_configs/osm.sumocfg", "gui": False},
+        {"id": "client_2", "config": "osm_sumo_configs/osm.sumocfg", "gui": False},
+        {"id": "client_3", "config": "osm_sumo_configs/osm.sumocfg", "gui": False}
     ]
     
     for config in client_configs:
@@ -204,7 +204,7 @@ def main():
     parser.add_argument("--mode", choices=["server", "client", "single", "multi"], 
                        default="single", help="Run mode")
     parser.add_argument("--client-id", type=str, help="Client ID (for client mode)")
-    parser.add_argument("--sumo-config", type=str, default="sumo_configs/intersection.sumocfg",
+    parser.add_argument("--sumo-config", type=str, default="osm_sumo_configs/osm.sumocfg",
                        help="Path to SUMO config")
     parser.add_argument("--server-address", type=str, default="localhost:8080",
                        help="Server address")
