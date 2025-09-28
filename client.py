@@ -16,7 +16,6 @@ if __name__ == "__main__":
     parser.add_argument("--show-phase-console", action="store_true", help="Print TLS phase/time each step")
     args = parser.parse_args()
     
-    # Create client
     client = TrafficFLClient(
         client_id=args.client_id,
         sumo_config_path=args.sumo_config,

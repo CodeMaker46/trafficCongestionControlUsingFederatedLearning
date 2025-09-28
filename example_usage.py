@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-Example usage of the Federated Learning Traffic Control System
-This script demonstrates how to use the system for traffic congestion control
-"""
 
 import os
 import sys
@@ -11,7 +6,6 @@ import matplotlib.pyplot as plt
 import time
 from datetime import datetime
 
-# Add project root to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from agents.dqn_agent import DQNAgent
@@ -21,24 +15,19 @@ from federated_learning.fl_server import TrafficFLServer
 from utils.visualization import TrafficVisualizer
 
 def example_single_agent_training():
-    """Example: Train a single DQN agent"""
     print("=" * 60)
     print("EXAMPLE 1: Single Agent Training")
     print("=" * 60)
     
-    # Create environment
     env = SUMOTrafficEnvironment("sumo_configs2/osm.sumocfg", gui=False)
     
-    # Create agent
     agent = DQNAgent(state_size=env.state_size, action_size=env.action_size)
     
-    # Training parameters
     episodes = 20
     max_steps = 100
     
     print(f"Training agent for {episodes} episodes...")
     
-    # Training loop
     rewards = []
     losses = []
     
@@ -48,16 +37,12 @@ def example_single_agent_training():
         episode_losses = []
         
         for step in range(max_steps):
-            # Choose action
             action = agent.act(state, training=True)
             
-            # Execute action
             next_state, reward, done, info = env.step(action)
             
-            # Store experience
             agent.remember(state, action, reward, next_state, done)
             
-            # Train agent
             if len(agent.memory) > agent.batch_size:
                 loss = agent.replay()
                 if loss is not None:
@@ -75,10 +60,8 @@ def example_single_agent_training():
         if episode % 5 == 0:
             print(f"Episode {episode}: Reward = {episode_reward:.2f}, Loss = {np.mean(episode_losses):.4f}")
     
-    # Close environment
     env.close()
     
-    # Plot results
     plt.figure(figsize=(12, 4))
     
     plt.subplot(1, 2, 1)
@@ -103,12 +86,10 @@ def example_single_agent_training():
     print("Results saved to results/single_agent_training.png")
 
 def example_federated_learning():
-    """Example: Federated learning with multiple clients"""
     print("=" * 60)
     print("EXAMPLE 2: Federated Learning Simulation")
     print("=" * 60)
     
-    # Create multiple clients
     clients = []
     client_configs = [
         {"id": "intersection_1", "config": "sumo_configs2/osm.sumocfg"},
@@ -124,7 +105,6 @@ def example_federated_learning():
         )
         clients.append(client)
     
-    # Simulate federated learning rounds
     num_rounds = 5
     global_params = None
     round_metrics = []
@@ -134,15 +114,12 @@ def example_federated_learning():
     for round_num in range(num_rounds):
         print(f"\n--- Round {round_num + 1} ---")
         
-        # Train all clients
         client_metrics = []
         for i, client in enumerate(clients):
             print(f"Training client {i + 1}...")
             
-            # Get current parameters
             current_params = client.get_parameters({})
             
-            # Train client
             config = {
                 "round": round_num,
                 "episodes": 3,
@@ -152,25 +129,20 @@ def example_federated_learning():
             updated_params, num_samples, metrics = client.fit(current_params, config)
             client_metrics.append(metrics)
             
-            # Store parameters for aggregation
             if global_params is None:
                 global_params = updated_params
             else:
-                # Simple average aggregation
                 for j in range(len(global_params)):
                     global_params[j] = (global_params[j] + updated_params[j]) / 2
         
-        # Update all clients with aggregated parameters
         for client in clients:
             client.set_parameters(global_params)
         
-        # Evaluate all clients
         eval_metrics = []
         for i, client in enumerate(clients):
             eval_result = client.evaluate(global_params, config)
             eval_metrics.append(eval_result[2])
         
-        # Calculate round metrics
         avg_reward = np.mean([m.get('average_reward', 0) for m in client_metrics])
         avg_waiting = np.mean([m.get('waiting_time', 0) for m in eval_metrics])
         
@@ -185,7 +157,6 @@ def example_federated_learning():
         print(f"  Average Reward: {avg_reward:.4f}")
         print(f"  Average Waiting Time: {avg_waiting:.2f}")
     
-    # Plot federated learning results
     plt.figure(figsize=(12, 4))
     
     rounds = [m['round'] for m in round_metrics]
@@ -214,23 +185,20 @@ def example_federated_learning():
     print("Results saved to results/federated_learning_example.png")
 
 def example_performance_comparison():
-    """Example: Compare different training strategies"""
     print("=" * 60)
     print("EXAMPLE 3: Performance Comparison")
     print("=" * 60)
     
-    # Test different learning rates
     learning_rates = [0.001, 0.01, 0.1]
     results = {}
     
     for lr in learning_rates:
         print(f"Testing learning rate: {lr}")
         
-        # Create environment and agent
+ and agent
         env = SUMOTrafficEnvironment("sumo_configs2/osm.sumocfg", gui=False)
         agent = DQNAgent(state_size=env.state_size, action_size=env.action_size, learning_rate=lr)
         
-        # Training
         episodes = 10
         rewards = []
         
@@ -257,7 +225,6 @@ def example_performance_comparison():
         results[lr] = rewards
         env.close()
     
-    # Plot comparison
     plt.figure(figsize=(10, 6))
     
     for lr, rewards in results.items():
@@ -277,14 +244,11 @@ def example_performance_comparison():
     print("Results saved to results/performance_comparison.png")
 
 def main():
-    """Run all examples"""
     print("Federated Learning Traffic Control System - Examples")
     print("=" * 60)
     
-    # Create results directory
     os.makedirs("results", exist_ok=True)
     
-    # Run examples
     try:
         example_single_agent_training()
         print("\n")

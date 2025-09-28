@@ -1,69 +1,47 @@
-# Federated RL Traffic Control with SUMO and Flower
+# Smart Traffic Control with AI
 
-This project trains adaptive traffic light controllers using federated reinforcement learning over SUMO simulations. Each intersection (client) learns locally with a DQN and shares only model weights/metrics with a central server (Flower FedAvg). No raw traffic data leaves clients.
+A simple yet powerful system that uses artificial intelligence to control traffic lights and reduce congestion. Think of it as teaching multiple intersections to work together to keep traffic flowing smoothly.
 
-## Key features
+## What This Does
 
-- **Federated Learning (Flower)**: FedAvg across multiple clients with configurable round settings
-- **SUMO integration (TraCI)**: Real-time control of traffic lights; supports GUI and headless modes
-- **DQN (PyTorch)**: 3 hidden layers (128, 128, 64), replay buffer (10k), epsilon-greedy, target updates every 100 steps
-- **General network support**: Auto-detects first traffic light and incoming edges from any `.sumocfg` (OSM-ready)
-- **Robust simulation**: Minimum green time, collision teleport, optional GUI view settings for signal colors
-- **Metrics and persistence**: Training/performance metrics saved in `results/`
+Instead of having traffic lights that just follow a fixed timer, this system uses **federated learning** to make them smarter. Each intersection learns from its own traffic patterns and shares knowledge with other intersections - but without sharing any personal data about drivers.
 
-## Project structure
+**Key Benefits:**
+- 🚦 **Smarter Traffic Lights**: AI learns the best timing for each intersection
+- 🔄 **Collaborative Learning**: Intersections share knowledge to improve city-wide traffic
+- 🛡️ **Privacy Safe**: No personal data is shared between intersections
+- 📊 **Real Results**: See actual improvements in waiting times and traffic flow
 
-```
-traffic/
-├── agents/
-│   ├── dqn_agent.py              # PyTorch DQN agent
-│   └── traffic_environment.py    # SUMO wrapper (state/action/reward, TLS control)
-├── federated_learning/
-│   ├── fl_client.py              # Flower NumPyClient wrapper
-│   └── fl_server.py              # Flower FedAvg server utilities
-├── sumo_configs/                 # Example simple intersection config
-├── sumo_configs2/                # OSM-based city network (default)
-├── utils/visualization.py        # Result plotting helpers
-├── train_federated.py            # Main entry (server, client, single, multi)
-├── client.py                     # Standalone client launcher
-├── requirements.txt              # Pinned deps (TF 2.15 + Torch + Flower 1.4)
-└── README.md
-```
+## How It Works (Simple Version)
 
-## Requirements and installation
+1. **Each intersection** runs its own traffic simulation and AI agent
+2. **The AI learns** the best timing by watching traffic patterns
+3. **Intersections share** their learning (but not personal data) with a central server
+4. **Everyone gets smarter** as the system learns from all intersections together
 
-- Python 3.8+
-- SUMO 1.19+ (CLI `sumo` and GUI `sumo-gui` must be in PATH)
+## What You Need
 
-Install Python dependencies (Windows PowerShell):
-```bash
-python -m pip install -r requirements.txt
-```
+### Software Requirements
+- **Python 3.8 or newer** (download from python.org)
+- **SUMO Traffic Simulator** (download from sumo.dlr.de)
 
-Notes on versions:
-- TensorFlow 2.15.0 and Flower 1.4.0 require `protobuf<4`; this is pinned.
-- PyTorch (CPU) is installed from PyPI automatically.
+### Quick Setup
+1. **Install Python dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Verify SUMO:
-```bash
-sumo --version
-sumo-gui --version
-```
+2. **Verify SUMO is working:**
+   ```bash
+   sumo --version
+   ```
 
-## How it works (flow)
+3. **Run the setup script:**
+   ```bash
+   python setup.py
+   ```
 
-1) Server starts FedAvg and waits for clients.
-2) Each client runs a local SUMO simulation and a DQN agent:
-   - State (12 dims): for up to 4 incoming edges × [vehicle_count, queue_length, waiting_time], normalized
-   - Action: integer mapped to a traffic light phase index (wraps modulo available phases)
-   - Reward: penalize waiting and queues, small bonus for flow
-   - Safety: minimum green time (default 5s) and collision teleport to avoid pile-ups
-3) After local episodes, clients send model weights and metrics to server.
-4) Server aggregates weights (weighted by total steps) and broadcasts the global model.
-
-## Running the system
-
-Default SUMO config: `sumo_configs2/osm.sumocfg` (OSM network). GUI loads `osm.view.xml` when present.
+## Getting Started
 
 ### Quick single-client smoke test
 ```bash
@@ -83,46 +61,114 @@ python client.py --client-id client_1 --sumo-config sumo_configs2/osm.sumocfg --
 python client.py --client-id client_2 --sumo-config sumo_configs2/osm.sumocfg --server-address localhost:8080 --gui
 ```
 
-Remove `--gui` to run headless. When GUI is enabled, you’ll see signal colors and live phase switching.
+Remove `--gui` to run headless. When GUI is enabled, you'll see signal colors and live phase switching.
 
-## DQN agent details (`agents/dqn_agent.py`)
+## Understanding the Results
 
-- Architecture: Linear(12→128) → ReLU → 128 → ReLU → 64 → ReLU → Linear(→4)
-- Replay buffer: 10,000 transitions, batch 32, Adam lr=1e-3
-- Exploration: start 1.0, min 0.01, decay 0.995
-- Target network: synchronize every 100 gradient steps
-- Save/Load: `torch.save`/`torch.load`; weights exposed as NumPy arrays for Flower
+The system automatically saves results to the `results/` folder:
+- **Training progress**: How well the AI is learning
+- **Performance metrics**: Waiting times, queue lengths, traffic flow
+- **Visual charts**: Easy-to-read graphs showing improvements
 
-## SUMO environment (`agents/traffic_environment.py`)
+## Project Structure
 
-- Auto-discovers first TLS id and its incoming edges via TraCI
-- State: 4 edges × [veh_count, queue_len, waiting_time] (padded if fewer edges)
-- Action application: set phase by index; enforce minimum green time (default 5s)
-- Reward: `-waiting/200 - queue/10 + flow_bonus`
-- Stability: `--collision.action teleport`, `--time-to-teleport 60`, `--step-length 1.0`
-- GUI: if `--gui` is used, attempts to load `osm.view.xml` to show TLS indicators
+```
+traffic/
+├── agents/                    # The AI brains
+│   ├── dqn_agent.py          # Deep learning agent
+│   └── traffic_environment.py # Traffic simulation interface
+├── federated_learning/       # Collaboration system
+│   ├── fl_client.py          # Individual intersection
+│   └── fl_server.py          # Central coordinator
+├── sumo_configs/             # Simple test intersection
+├── sumo_configs2/            # Real city network
+├── utils/visualization.py    # Results and charts
+├── train_federated.py        # Main program
+└── client.py                 # Individual intersection runner
+```
 
-## Server (`federated_learning/fl_server.py`)
+## Technical Details (For Developers)
 
-- Flower 1.4 FedAvg with:
-  - `min_available_clients`, `min_fit_clients`, `min_evaluate_clients`
-  - weighted aggregation by client `total_steps`
-  - configurable fit/eval configs per round
+### AI Agent (DQN)
+- **Architecture**: 3-layer neural network (128 → 128 → 64 neurons)
+- **Learning**: Uses experience replay and target networks
+- **Exploration**: Starts random, becomes smarter over time
+- **Memory**: Remembers 10,000 traffic situations
 
-## Results and visualization
+### Traffic Simulation (SUMO)
+- **State**: Monitors vehicle count, queue length, and waiting time
+- **Actions**: Controls traffic light phases
+- **Safety**: Minimum green times and collision prevention
+- **Realism**: Based on real traffic patterns
 
-Artifacts saved to `results/` by training scripts (client histories, performance metrics, optional server metrics). Plot helpers are in `utils/visualization.py`.
+### Federated Learning (Flower)
+- **Privacy**: Only model weights are shared, never raw data
+- **Aggregation**: Server combines learning from all intersections
+- **Scalability**: Works with any number of intersections
 
 ## Troubleshooting
 
-- SUMO GUI not opening: ensure `sumo-gui` is on PATH (`sumo-gui --version`). Use `--gui` flag on client command.
-- Flower server keyword error: Flower 1.4 uses `min_evaluate_clients` (not `min_eval_clients`). Already fixed in this repo.
-- Windows PowerShell tips: use separate commands (no `&&`). Inline Python via `python -c "..."`.
-- Protobuf conflicts: this repo pins TF 2.15 + `protobuf<4` + Flower 1.4. Do not upgrade TF beyond 2.15 unless you also upgrade Flower and adjust protobuf.
+### Common Issues
 
+**"SUMO not found" error:**
+- Make sure SUMO is installed and added to your system PATH
+- Test with: `sumo --version`
+
+**"GUI not opening":**
+- Try running without `--gui` first
+- Make sure `sumo-gui` is installed
+
+**"Python import errors":**
+- Run: `pip install -r requirements.txt`
+- Make sure you're using Python 3.8+
+
+**"Server connection failed":**
+- Check that the server is running first
+- Make sure all clients use the same server address
+
+### Getting Help
+
+If you run into issues:
+1. Check the error messages carefully
+2. Make sure all requirements are installed
+3. Try running the simple test first: `python train_federated.py --mode single`
+
+## Examples and Use Cases
+
+### For Researchers
+- Study federated learning in real-world applications
+- Experiment with different AI architectures
+- Analyze traffic optimization algorithms
+
+### For Students
+- Learn about reinforcement learning
+- Understand federated learning concepts
+- Practice with traffic simulation
+
+### For Cities
+- Test traffic optimization strategies
+- Evaluate AI-based traffic management
+- Plan smart city infrastructure
+
+## Contributing
+
+We welcome contributions! Areas where help is especially appreciated:
+- Adding new traffic scenarios
+- Improving the AI algorithms
+- Creating better visualizations
+- Writing documentation
+
+## License
+
+This project is open source. Feel free to use it for research, education, or commercial applications.
 
 ## Acknowledgments
 
-- SUMO team
-- Flower (flwr)
-- PyTorch
+Thanks to:
+- **SUMO team** for the excellent traffic simulator
+- **Flower team** for federated learning framework
+- **PyTorch team** for the deep learning tools
+
+---
+
+**Ready to make traffic smarter? Start with the quick test and watch AI learn to control traffic lights!**

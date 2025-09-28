@@ -1,7 +1,3 @@
-#!/usr/bin/env python3
-"""
-Setup script for Federated Learning Traffic Control System
-"""
 
 import os
 import sys
@@ -9,7 +5,6 @@ import subprocess
 import platform
 
 def check_python_version():
-    """Check if Python version is compatible"""
     if sys.version_info < (3, 8):
         print("Error: Python 3.8 or higher is required")
         print(f"Current version: {sys.version}")
@@ -18,7 +13,6 @@ def check_python_version():
     return True
 
 def check_sumo_installation():
-    """Check if SUMO is installed and accessible"""
     try:
         result = subprocess.run(['sumo', '--version'], 
                               capture_output=True, text=True, timeout=10)
@@ -33,7 +27,6 @@ def check_sumo_installation():
         return False
 
 def install_requirements():
-    """Install Python requirements"""
     print("Installing Python requirements...")
     try:
         subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt'], 
@@ -45,14 +38,12 @@ def install_requirements():
         return False
 
 def create_directories():
-    """Create necessary directories"""
     directories = ['results', 'logs', 'models']
     for directory in directories:
         os.makedirs(directory, exist_ok=True)
         print(f"✓ Created directory: {directory}")
 
 def make_scripts_executable():
-    """Make Python scripts executable"""
     scripts = ['train_federated.py', 'client.py']
     for script in scripts:
         if os.path.exists(script):
@@ -60,17 +51,14 @@ def make_scripts_executable():
             print(f"✓ Made {script} executable")
 
 def verify_installation():
-    """Verify the installation by running a simple test"""
     print("\nVerifying installation...")
     try:
-        # Test imports
         from agents.dqn_agent import DQNAgent
         from agents.traffic_environment import SUMOTrafficEnvironment
         from federated_learning.fl_client import TrafficFLClient
         from federated_learning.fl_server import TrafficFLServer
         print("✓ All modules can be imported successfully")
         
-        # Test DQN agent creation
         agent = DQNAgent(state_size=4, action_size=4)
         print("✓ DQN agent can be created")
         
@@ -80,7 +68,6 @@ def verify_installation():
         return False
 
 def print_usage_instructions():
-    """Print usage instructions"""
     print("\n" + "="*60)
     print("SETUP COMPLETE!")
     print("="*60)
@@ -102,15 +89,12 @@ def print_usage_instructions():
     print("="*60)
 
 def main():
-    """Main setup function"""
     print("Federated Learning Traffic Control System Setup")
     print("=" * 50)
     
-    # Check Python version
     if not check_python_version():
         sys.exit(1)
     
-    # Check SUMO installation
     if not check_sumo_installation():
         print("\nSUMO installation required:")
         print("1. Download SUMO from: https://sumo.dlr.de/docs/Downloads.php")
@@ -118,22 +102,17 @@ def main():
         print("3. Run this setup script again")
         sys.exit(1)
     
-    # Install requirements
     if not install_requirements():
         sys.exit(1)
     
-    # Create directories
     create_directories()
     
-    # Make scripts executable
     make_scripts_executable()
     
-    # Verify installation
     if not verify_installation():
         print("\nInstallation verification failed. Please check the error messages above.")
         sys.exit(1)
     
-    # Print usage instructions
     print_usage_instructions()
 
 if __name__ == "__main__":

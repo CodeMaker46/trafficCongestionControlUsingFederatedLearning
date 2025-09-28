@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-Federated Learning Traffic Control System
-Main training script for traffic congestion control using federated learning
-"""
 
 import os
 import sys
@@ -12,7 +7,6 @@ import json
 from datetime import datetime
 import numpy as np
 
-# Add project root to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from federated_learning.fl_server import TrafficFLServer
@@ -21,7 +15,6 @@ from utils.visualization import TrafficVisualizer
 import flwr as fl
 
 def create_client_script():
-    """Create a client script that can be run independently"""
     client_script = '''#!/usr/bin/env python3
 import sys
 import os
@@ -40,7 +33,6 @@ if __name__ == "__main__":
     parser.add_argument("--show-phase-console", action="store_true", help="Print TLS phase/time each step")
     args = parser.parse_args()
     
-    # Create client
     client = TrafficFLClient(
         client_id=args.client_id,
         sumo_config_path=args.sumo_config,
@@ -61,12 +53,10 @@ if __name__ == "__main__":
     print("Client script created: client.py")
 
 def run_server(num_rounds=10, min_clients=2, server_address="localhost:8080"):
-    """Run the federated learning server"""
     print("Starting Federated Learning Server...")
     print(f"Server Address: {server_address}")
     print(f"Rounds: {num_rounds}, Min Clients: {min_clients}")
     
-    # Create server
     server = TrafficFLServer(
         num_rounds=num_rounds,
         min_clients=min_clients,
@@ -74,14 +64,11 @@ def run_server(num_rounds=10, min_clients=2, server_address="localhost:8080"):
         min_eval_clients=min_clients
     )
     
-    # Run server
     server.run_federated_learning(server_address)
 
 def run_single_client_training(gui: bool = False, show_phase_console: bool = False):
-    """Run training with a single client for testing"""
     print("Running single client training for testing...")
     
-    # Create client
     client = TrafficFLClient(
         client_id="test_client",
         sumo_config_path="sumo_configs2/osm.sumocfg",
@@ -90,15 +77,12 @@ def run_single_client_training(gui: bool = False, show_phase_console: bool = Fal
         show_gst_gui=gui
     )
     
-    # Simulate federated learning rounds
     num_rounds = 5
     for round_num in range(num_rounds):
         print(f"\n--- Round {round_num + 1} ---")
         
-        # Get current parameters
         current_params = client.get_parameters({})
         
-        # Train client
         config = {
             "round": round_num,
             "episodes": 5,
@@ -107,24 +91,20 @@ def run_single_client_training(gui: bool = False, show_phase_console: bool = Fal
         
         updated_params, num_samples, metrics = client.fit(current_params, config)
         
-        # Evaluate client
         eval_metrics = client.evaluate(updated_params, config)
         
         print(f"Training Metrics: {metrics}")
         
-        # Print comprehensive evaluation metrics
         print("\n" + "="*60)
         print("DETAILED EVALUATION METRICS")
         print("="*60)
         
-        # Overall metrics
         print(f"Overall Performance:")
         print(f"  Average Reward: {eval_metrics[2].get('average_reward', 0):.4f}")
         print(f"  Total Waiting Time: {eval_metrics[2].get('waiting_time', 0):.2f}s")
         print(f"  Average Queue Length: {eval_metrics[2].get('queue_length', 0):.2f}")
         print(f"  Max Queue Length: {eval_metrics[2].get('max_queue_length', 0)}")
         
-        # Green Signal Time metrics
         gst = eval_metrics[2].get('green_signal_time', {})
         print(f"\nGreen Signal Time (GST):")
         try:
@@ -140,7 +120,6 @@ def run_single_client_training(gui: bool = False, show_phase_console: bool = Fal
         except Exception:
             print("  GST: Not available")
         
-        # Detailed per-road metrics - Each road separately
         per_lane_metrics = eval_metrics[2].get('per_lane_metrics', {})
         lane_summary = eval_metrics[2].get('lane_summary', {})
         
@@ -154,7 +133,6 @@ def run_single_client_training(gui: bool = False, show_phase_console: bool = Fal
                 print(f"\nROAD #{road_count}: {edge_id}")
                 print("-" * 50)
                 
-                # Core metrics you requested
                 vehicles = lane_data.get('vehicle_count', 0)
                 queue_length = lane_data.get('queue_length', 0)
                 waiting_time = lane_data.get('waiting_time', 0)
@@ -167,16 +145,13 @@ def run_single_client_training(gui: bool = False, show_phase_console: bool = Fal
                 print(f"Green Signal Time: {green_signal_time:.2f} seconds")
                 print(f"Average Speed: {avg_speed:.2f} m/s")
                 
-                # Add traffic light status (this will be added to lane_data in next update)
                 print(f"Traffic Light Status: Will be shown in real-time console")
                 
-                # Additional useful info
                 occupancy = lane_data.get('occupancy_percent', 0)
                 lane_length = lane_data.get('lane_length', 0)
                 print(f"Road Occupancy: {occupancy:.1f}%")
                 print(f"Road Length: {lane_length:.1f} meters")
                 
-                # Vehicle type breakdown
                 vehicle_types = lane_data.get('vehicle_types', {})
                 if vehicle_types:
                     type_str = ", ".join([f"{vtype}: {count}" for vtype, count in vehicle_types.items()])
@@ -203,10 +178,8 @@ def run_single_client_training(gui: bool = False, show_phase_console: bool = Fal
         
         print("="*60)
         
-        # Update client parameters
         client.set_parameters(updated_params)
     
-    # Save results
     client.save_training_history("results/single_client_training.json")
     client.save_performance_metrics("results/single_client_performance.json")
     
@@ -214,10 +187,8 @@ def run_single_client_training(gui: bool = False, show_phase_console: bool = Fal
     print("Results saved to results/ directory")
 
 def run_multi_client_simulation():
-    """Run simulation with multiple clients"""
     print("Running multi-client simulation...")
     
-    # Create multiple clients with different configurations
     clients = []
     client_configs = [
         {"id": "client_1", "config": "sumo_configs2/osm.sumocfg", "gui": False},
@@ -233,22 +204,18 @@ def run_multi_client_simulation():
         )
         clients.append(client)
     
-    # Simulate federated learning
     num_rounds = 10
     global_params = None
     
     for round_num in range(num_rounds):
         print(f"\n--- Federated Learning Round {round_num + 1} ---")
         
-        # Train all clients
         client_metrics = []
         for i, client in enumerate(clients):
             print(f"Training client {i + 1}...")
             
-            # Get current parameters
             current_params = client.get_parameters({})
             
-            # Train client
             config = {
                 "round": round_num,
                 "episodes": 5,
@@ -258,33 +225,27 @@ def run_multi_client_simulation():
             updated_params, num_samples, metrics = client.fit(current_params, config)
             client_metrics.append(metrics)
             
-            # Store parameters for aggregation
             if global_params is None:
                 global_params = updated_params
             else:
-                # Simple average aggregation
                 for j in range(len(global_params)):
                     global_params[j] = (global_params[j] + updated_params[j]) / 2
         
-        # Update all clients with aggregated parameters
         for client in clients:
             client.set_parameters(global_params)
         
-        # Evaluate all clients
         eval_metrics = []
         for i, client in enumerate(clients):
             eval_result = client.evaluate(global_params, config)
             eval_metrics.append(eval_result[2])
             print(f"Client {i + 1} evaluation: {eval_result[2]}")
         
-        # Print round summary
         avg_reward = np.mean([m.get('average_reward', 0) for m in client_metrics])
         avg_waiting = np.mean([m.get('waiting_time', 0) for m in eval_metrics])
         print(f"Round {round_num + 1} Summary:")
         print(f"  Average Reward: {avg_reward:.4f}")
         print(f"  Average Waiting Time: {avg_waiting:.2f}")
     
-    # Save results
     for i, client in enumerate(clients):
         client.save_training_history(f"results/client_{i+1}_training.json")
         client.save_performance_metrics(f"results/client_{i+1}_performance.json")
@@ -308,7 +269,6 @@ def main():
     
     args = parser.parse_args()
     
-    # Create results directory
     os.makedirs("results", exist_ok=True)
     
     if args.mode == "server":
@@ -337,7 +297,6 @@ def main():
     print("Training completed!")
 
 if __name__ == "__main__":
-    # Create client script
     create_client_script()
     
     # Run main function

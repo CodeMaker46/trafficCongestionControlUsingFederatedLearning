@@ -1,18 +1,12 @@
-#!/usr/bin/env python3
-"""
-Test script for the Federated Learning Traffic Control System
-"""
 
 import os
 import sys
 import numpy as np
 import time
 
-# Add project root to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def test_imports():
-    """Test if all modules can be imported"""
     print("Testing imports...")
     try:
         from agents.dqn_agent import DQNAgent
@@ -27,24 +21,19 @@ def test_imports():
         return False
 
 def test_dqn_agent():
-    """Test DQN agent creation and basic functionality"""
     print("Testing DQN agent...")
     try:
         from agents.dqn_agent import DQNAgent
         
-        # Create agent
         agent = DQNAgent(state_size=4, action_size=4)
         
-        # Test action selection
         state = np.random.random(4)
         action = agent.act(state)
         assert 0 <= action < 4, "Invalid action"
         
-        # Test experience storage
         next_state = np.random.random(4)
         agent.remember(state, action, 1.0, next_state, False)
         
-        # Test Q-values
         q_values = agent.get_q_values(state)
         assert len(q_values) == 4, "Invalid Q-values length"
         
@@ -55,7 +44,6 @@ def test_dqn_agent():
         return False
 
 def test_traffic_environment():
-    """Test traffic environment (without SUMO)"""
     print("Testing traffic environment...")
     try:
         from agents.traffic_environment import SUMOTrafficEnvironment
@@ -63,7 +51,6 @@ def test_traffic_environment():
         # Create environment
         env = SUMOTrafficEnvironment("sumo_configs2/osm.sumocfg", gui=False)
         
-        # Test state space
         assert env.state_size == 4, "Invalid state size"
         assert env.action_size == 4, "Invalid action size"
         
@@ -74,17 +61,14 @@ def test_traffic_environment():
         return False
 
 def test_federated_learning():
-    """Test federated learning components"""
     print("Testing federated learning components...")
     try:
         from federated_learning.fl_client import TrafficFLClient
         from federated_learning.fl_server import TrafficFLServer
         
-        # Test server creation
         server = TrafficFLServer(num_rounds=1, min_clients=1)
         assert server.num_rounds == 1, "Invalid server configuration"
         
-        # Test client creation
         client = TrafficFLClient(
             client_id="test_client",
             sumo_config_path="sumo_configs2/osm.sumocfg",
@@ -99,7 +83,6 @@ def test_federated_learning():
         return False
 
 def test_visualization():
-    """Test visualization utilities"""
     print("Testing visualization utilities...")
     try:
         from utils.visualization import TrafficVisualizer
@@ -107,7 +90,6 @@ def test_visualization():
         # Create visualizer
         viz = TrafficVisualizer("results")
         
-        # Test with dummy data
         dummy_metrics = [
             {'round': 0, 'type': 'fit', 'metrics': {'avg_average_reward': 0.5}},
             {'round': 1, 'type': 'fit', 'metrics': {'avg_average_reward': 0.6}},
@@ -115,7 +97,6 @@ def test_visualization():
             {'round': 1, 'type': 'evaluate', 'metrics': {'avg_waiting_time': 8.0}}
         ]
         
-        # Test report creation
         report = viz.create_summary_report(dummy_metrics, {})
         assert 'summary' in report, "Invalid report structure"
         
@@ -126,7 +107,6 @@ def test_visualization():
         return False
 
 def test_sumo_configs():
-    """Test if SUMO configuration files exist"""
     print("Testing SUMO configuration files...")
     try:
         config_files = [
@@ -143,7 +123,6 @@ def test_sumo_configs():
         return False
 
 def main():
-    """Run all tests"""
     print("Federated Learning Traffic Control System - Test Suite")
     print("=" * 60)
     
