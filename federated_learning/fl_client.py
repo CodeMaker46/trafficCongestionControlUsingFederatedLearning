@@ -179,7 +179,9 @@ class TrafficFLClient(fl.client.NumPyClient):
             'waiting_time': performance['total_waiting_time'],
             'queue_length': performance['average_queue_length'],
             'max_queue_length': performance['max_queue_length'],
-            'green_signal_time': performance.get('green_signal_time', {})
+            'green_signal_time': performance.get('green_signal_time', {}),
+            'per_lane_metrics': performance.get('per_lane_metrics', {}),
+            'lane_summary': performance.get('lane_summary', {})
         }
     
     def save_training_history(self, filepath: str):

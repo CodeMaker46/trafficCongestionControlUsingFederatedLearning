@@ -111,24 +111,97 @@ def run_single_client_training(gui: bool = False, show_phase_console: bool = Fal
         eval_metrics = client.evaluate(updated_params, config)
         
         print(f"Training Metrics: {metrics}")
-        # Print GST explicitly
+        
+        # Print comprehensive evaluation metrics
+        print("\n" + "="*60)
+        print("DETAILED EVALUATION METRICS")
+        print("="*60)
+        
+        # Overall metrics
+        print(f"Overall Performance:")
+        print(f"  Average Reward: {eval_metrics[2].get('average_reward', 0):.4f}")
+        print(f"  Total Waiting Time: {eval_metrics[2].get('waiting_time', 0):.2f}s")
+        print(f"  Average Queue Length: {eval_metrics[2].get('queue_length', 0):.2f}")
+        print(f"  Max Queue Length: {eval_metrics[2].get('max_queue_length', 0)}")
+        
+        # Green Signal Time metrics
         gst = eval_metrics[2].get('green_signal_time', {})
-        print("Evaluation Metrics:")
-        print(f"  average_reward: {eval_metrics[2].get('average_reward', 0):.4f}")
-        print(f"  waiting_time: {eval_metrics[2].get('waiting_time', 0):.2f}")
-        print(f"  queue_length: {eval_metrics[2].get('queue_length', 0):.2f}")
+        print(f"\nGreen Signal Time (GST):")
         try:
             avg_gst = gst.get('avg_gst', 0.0)
             num_lanes = gst.get('num_lanes', 0)
-            print(f"  GST avg_gst(s): {avg_gst:.2f} over {num_lanes} lanes")
+            print(f"  Average GST: {avg_gst:.2f}s over {num_lanes} lanes")
             per_edge = gst.get('per_edge', {})
             if per_edge:
                 for edge_id, val in per_edge.items():
-                    print(f"    GST[{edge_id}]= {float(val):.2f}s")
+                    print(f"    Lane {edge_id}: {float(val):.2f}s")
             else:
-                print("    GST per_edge: {}")
+                print("    Per-lane GST: Not available")
         except Exception:
-            print("  GST: unavailable")
+            print("  GST: Not available")
+        
+        # Detailed per-road metrics - Each road separately
+        per_lane_metrics = eval_metrics[2].get('per_lane_metrics', {})
+        lane_summary = eval_metrics[2].get('lane_summary', {})
+        
+        if per_lane_metrics:
+            print(f"\n" + "="*80)
+            print("TARGET INTERSECTION - EACH ROAD METRICS")
+            print("="*80)
+            
+            road_count = 1
+            for edge_id, lane_data in per_lane_metrics.items():
+                print(f"\nROAD #{road_count}: {edge_id}")
+                print("-" * 50)
+                
+                # Core metrics you requested
+                vehicles = lane_data.get('vehicle_count', 0)
+                queue_length = lane_data.get('queue_length', 0)
+                waiting_time = lane_data.get('waiting_time', 0)
+                green_signal_time = lane_data.get('green_signal_time', 0)
+                avg_speed = lane_data.get('average_speed', 0)
+                
+                print(f"Vehicles on Road: {vehicles}")
+                print(f"Queue Length: {queue_length} vehicles")
+                print(f"Waiting Time: {waiting_time:.2f} seconds")
+                print(f"Green Signal Time: {green_signal_time:.2f} seconds")
+                print(f"Average Speed: {avg_speed:.2f} m/s")
+                
+                # Add traffic light status (this will be added to lane_data in next update)
+                print(f"Traffic Light Status: Will be shown in real-time console")
+                
+                # Additional useful info
+                occupancy = lane_data.get('occupancy_percent', 0)
+                lane_length = lane_data.get('lane_length', 0)
+                print(f"Road Occupancy: {occupancy:.1f}%")
+                print(f"Road Length: {lane_length:.1f} meters")
+                
+                # Vehicle type breakdown
+                vehicle_types = lane_data.get('vehicle_types', {})
+                if vehicle_types:
+                    type_str = ", ".join([f"{vtype}: {count}" for vtype, count in vehicle_types.items()])
+                    print(f"Vehicle Types: {type_str}")
+                else:
+                    print(f"Vehicle Types: No vehicles")
+                
+                road_count += 1
+        
+        if lane_summary:
+            print(f"Lane Summary Statistics:")
+            print(f"  Total Vehicles: {lane_summary.get('total_vehicles', 0)}")
+            print(f"  Total Queue Length: {lane_summary.get('total_queue_length', 0)}")
+            print(f"  Total Waiting Time: {lane_summary.get('total_waiting_time', 0):.2f}s")
+            print(f"  Average GST: {lane_summary.get('average_gst', 0):.2f}s")
+            print(f"  Min GST: {lane_summary.get('min_gst', 0):.2f}s")
+            print(f"  Max GST: {lane_summary.get('max_gst', 0):.2f}s")
+            print(f"  Max Queue Length: {lane_summary.get('max_queue_length', 0)}")
+            print(f"  Max Waiting Time: {lane_summary.get('max_waiting_time', 0):.2f}s")
+            print(f"  Average Speed: {lane_summary.get('average_speed', 0):.2f} m/s")
+            print(f"  Active Lanes: {lane_summary.get('num_active_lanes', 0)}")
+            print(f"  Congested Lanes: {lane_summary.get('num_congested_lanes', 0)}")
+            print(f"  Total Occupancy: {lane_summary.get('total_occupancy', 0):.1f}%")
+        
+        print("="*60)
         
         # Update client parameters
         client.set_parameters(updated_params)

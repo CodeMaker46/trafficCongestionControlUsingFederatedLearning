@@ -67,7 +67,7 @@ Default SUMO config: `sumo_configs2/osm.sumocfg` (OSM network). GUI loads `osm.v
 
 ### Quick single-client smoke test
 ```bash
-python train_federated.py --mode single --sumo-config sumo_configs2/osm.sumocfg
+python train_federated.py --mode single --sumo-config sumo_configs2/osm.sumocfg --gui --show-phase-console
 ```
 
 ### Federated training (server + clients)

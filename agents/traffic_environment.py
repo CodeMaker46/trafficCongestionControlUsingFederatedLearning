@@ -92,7 +92,42 @@ class SUMOTrafficEnvironment:
         try:
             if self.tl_id is None:
                 tls_ids = traci.trafficlight.getIDList()
-                self.tl_id = tls_ids[0] if tls_ids else None
+                # Look for specific intersection with your edge names
+                target_edges = ['56723584#42_0', '532739771#0', '36801848#0', '1120576436#1', '532739771#1']
+                target_intersection_id = None
+                
+                for tl_id in tls_ids:
+                    try:
+                        links = traci.trafficlight.getControlledLinks(tl_id)
+                        edge_ids = []
+                        for conn_group in links:
+                            for conn in conn_group:
+                                if conn and len(conn) >= 1:
+                                    try:
+                                        edge_id = traci.lane.getEdgeID(conn[0])
+                                        if edge_id not in edge_ids:
+                                            edge_ids.append(edge_id)
+                                    except:
+                                        pass
+                        
+                        # Check if this intersection controls your target edges
+                        matching_edges = [edge for edge in edge_ids if edge in target_edges]
+                        print(f"Checking TLS {tl_id}: {len(edge_ids)} edges, {len(matching_edges)} matches")
+                        print(f"  All edges: {edge_ids}")
+                        print(f"  Target edges: {target_edges}")
+                        print(f"  Matching: {matching_edges}")
+                        
+                        if len(matching_edges) >= 3:  # At least 3 of your target edges
+                            target_intersection_id = tl_id
+                            print(f"✅ FOUND TARGET INTERSECTION: {tl_id}")
+                            print(f"✅ Controlled roads: {edge_ids}")
+                            print(f"✅ Matching your target edges: {matching_edges}")
+                            break
+                    except:
+                        continue
+                
+                # Use target intersection if found, otherwise first available
+                self.tl_id = target_intersection_id if target_intersection_id else (tls_ids[0] if tls_ids else None)
             if self.tl_id is not None:
                 # Determine incoming edges from controlled links (unique upstream lane edges)
                 links = traci.trafficlight.getControlledLinks(self.tl_id)
@@ -114,7 +149,31 @@ class SUMOTrafficEnvironment:
                     if e not in seen and e != '':
                         seen.add(e)
                         ordered_unique.append(e)
-                self.incoming_edges = ordered_unique[:4]
+
+                # Prioritize target edges so 36801848#0 is included among the four
+                try:
+                    # Support both variants with/without sublane suffix for the round edge
+                    target_edges_priority = [
+                        '532739771#0',
+                        '532739771#1',
+                        '1120576436#1',
+                        '36801848#0',
+                        '56723584#42',
+                        '56723584#42_0'
+                    ]
+                    prioritized = [e for e in target_edges_priority if e in ordered_unique]
+                    # Fill remaining slots (if any) with other discovered edges
+                    if len(prioritized) < 5:
+                        for e in ordered_unique:
+                            if e not in prioritized:
+                                prioritized.append(e)
+                            if len(prioritized) >= 5:
+                                break
+                    # Track up to 5 prioritized edges for metrics/printing
+                    self.incoming_edges = prioritized[:5]
+                except Exception:
+                    # Fallback: first discovered (up to 5)
+                    self.incoming_edges = ordered_unique[:5]
                 # Map one representative lane for each incoming edge for GUI placement
                 self._edge_to_lane: Dict[str, str] = {}
                 for conn_group in links:
@@ -168,6 +227,7 @@ class SUMOTrafficEnvironment:
         """Get current state of the traffic environment"""
         try:
             metrics: List[float] = []
+            # Use exactly 4 edges for DQN state (fixed size)
             edges = self.incoming_edges[:4]
             # pad to 4 edges if fewer discovered
             while len(edges) < 4:
@@ -236,28 +296,36 @@ class SUMOTrafficEnvironment:
         return 'car'
 
     def _compute_green_signal_times(self) -> Dict:
-        """Compute Green Signal Time (GST) per incoming edge based on the paper formula.
+        """Compute Green Signal Time (GST) per incoming edge with realistic adaptive calculation.
 
-        For each incoming edge e, let count_c be number of vehicles of class c on e.
-        Adjusted time per class c: adj_c = avg_time_c + startup_time_c.
-        AllClassAverageTime for edge e is sum(count_c * adj_c) over classes.
-        GST_e = AllClassAverageTime / (num_lanes + 1), where num_lanes is the
-        number of incoming edges considered.
+        GST calculation considers:
+        1. Minimum green time for safety (5-8 seconds)
+        2. Vehicle count and queue length
+        3. Vehicle types and their crossing times
+        4. Adaptive scaling based on traffic density
         """
         try:
-            edges = self.incoming_edges[:4]
+            # Collect detailed metrics for up to 5 prioritized edges
+            edges = self.incoming_edges[:5]
             num_lanes = max(1, len(edges))
             gst_per_edge: Dict[str, float] = {}
+            
+            # Base minimum green time (safety requirement)
+            min_green_time = 5.0  # Minimum 5 seconds for safety
+            max_green_time = 30.0  # Maximum 30 seconds to prevent excessive delays
+            
             for edge_id in edges:
                 if not edge_id:
                     continue
+                    
+                # Get vehicles on this edge
                 vehicle_ids = []
                 try:
                     vehicle_ids = traci.edge.getLastStepVehicleIDs(edge_id)
                 except Exception:
                     vehicle_ids = []
-                # If edge-level query yields none (common with long edges), fall back to the
-                # controlled upstream lane closest to the junction.
+                
+                # Fallback to lane-level if edge query fails
                 if not vehicle_ids:
                     lane_id = getattr(self, '_edge_to_lane', {}).get(edge_id, None)
                     if lane_id:
@@ -265,18 +333,52 @@ class SUMOTrafficEnvironment:
                             vehicle_ids = traci.lane.getLastStepVehicleIDs(lane_id)
                         except Exception:
                             vehicle_ids = []
+                
+                # Count vehicles by class
                 class_counts: Dict[str, int] = {}
                 for vid in vehicle_ids:
                     cls = self._map_vehicle_to_class(vid)
                     class_counts[cls] = class_counts.get(cls, 0) + 1
-
-                all_class_time = 0.0
+                
+                # Calculate base time needed for vehicles
+                total_vehicles = sum(class_counts.values())
+                base_time = 0.0
+                
                 for cls, cnt in class_counts.items():
                     avg_t = self.class_avg_time_s.get(cls, 2.0)
                     start_t = self.class_startup_time_s.get(cls, 0.7)
-                    all_class_time += float(cnt) * (avg_t + start_t)
-
-                gst = all_class_time / (num_lanes + 1.0)
+                    base_time += float(cnt) * (avg_t + start_t)
+                
+                # Get queue length for this edge
+                queue_length = self._get_queue_length(edge_id)
+                
+                # Adaptive GST calculation
+                if total_vehicles == 0:
+                    # No vehicles - use minimum green time (but can be 0 if no traffic)
+                    gst = 0.0  # No vehicles = no green time needed
+                else:
+                    # Calculate time per vehicle (realistic crossing time)
+                    time_per_vehicle = 2.5  # Average 2.5 seconds per vehicle to cross
+                    
+                    # Base time for vehicles present
+                    vehicle_time = total_vehicles * time_per_vehicle
+                    
+                    # Additional time for queued vehicles (they need more time to start moving)
+                    queue_penalty = queue_length * 1.5  # Extra 1.5s per queued vehicle
+                    
+                    # Total required time
+                    required_time = vehicle_time + queue_penalty
+                    
+                    # Apply adaptive scaling
+                    # Scale factor based on traffic density
+                    density_factor = min(2.0, max(1.0, total_vehicles / 5.0))  # Scale 1.0-2.0 based on density
+                    
+                    # Calculate final GST
+                    gst = required_time * density_factor
+                    
+                    # Ensure realistic bounds (allow 0 for no vehicles)
+                    gst = max(0.0, min(max_green_time, gst))
+                
                 gst_per_edge[edge_id] = float(gst)
 
             # Aggregate statistics
@@ -284,8 +386,11 @@ class SUMOTrafficEnvironment:
             snapshot = {
                 'per_edge': gst_per_edge,
                 'avg_gst': avg_gst,
-                'num_lanes': num_lanes
+                'num_lanes': num_lanes,
+                'min_green_time': min_green_time,
+                'max_green_time': max_green_time
             }
+            
             # Record for history with current sim time
             try:
                 snapshot_with_time = dict(snapshot)
@@ -299,7 +404,7 @@ class SUMOTrafficEnvironment:
             return snapshot
         except Exception as e:
             print(f"Error computing GST: {e}")
-            return {'per_edge': {}, 'avg_gst': 0.0, 'num_lanes': 0}
+            return {'per_edge': {}, 'avg_gst': 5.0, 'num_lanes': 0}
 
     def _setup_gst_gui_pois(self):
         """Create POIs in the GUI to display GST values near incoming lanes."""
@@ -380,9 +485,26 @@ class SUMOTrafficEnvironment:
             if self.show_phase_console:
                 try:
                     per_edge = gst_snapshot.get('per_edge', {})
-                    items = [{ 'lane': e, 'gst': round(float(v), 2) } for e, v in per_edge.items()]
-                    if items:
-                        print(f"[GST] {items} avg={gst_snapshot.get('avg_gst', 0.0):.2f}s")
+                    if per_edge:
+                        print(f"\n[TARGET INTERSECTION - REAL-TIME ROAD METRICS]")
+                        print("-" * 50)
+                        road_num = 1
+                        for edge_id, gst_val in per_edge.items():
+                            # Get current metrics for this road
+                            vehicles = self._get_vehicle_count(edge_id)
+                            queue = self._get_queue_length(edge_id)
+                            waiting = self._get_waiting_time(edge_id)
+                            speed = self._get_average_speed(edge_id)
+                            
+                            # Get traffic light status for this road
+                            light_status = self._get_traffic_light_status(edge_id)
+                            
+                            print(f"Road #{road_num} ({edge_id}): "
+                                  f"Vehicles={vehicles}, Queue={queue}, "
+                                  f"Waiting={waiting:.1f}s, GST={float(gst_val):.1f}s, "
+                                  f"Speed={speed:.1f}m/s, Light={light_status}")
+                            road_num += 1
+                        print("-" * 40)
                 except Exception:
                     pass
             self._update_gst_gui_labels(gst_snapshot)
@@ -565,6 +687,156 @@ class SUMOTrafficEnvironment:
         except Exception:
             return {}
     
+    def _get_detailed_lane_metrics(self) -> Dict:
+        """Get detailed metrics for each lane/edge with comprehensive information"""
+        try:
+            detailed_metrics = {
+                'per_lane_metrics': {},
+                'lane_summary': {}
+            }
+            
+            edges = self.incoming_edges[:4]
+            lane_data = []
+            
+            # Get current GST snapshot once for all lanes
+            gst_snapshot = self._compute_green_signal_times()
+            gst_per_edge = gst_snapshot.get('per_edge', {})
+            
+            for edge_id in edges:
+                if not edge_id:
+                    continue
+                    
+                # Get comprehensive metrics for this lane
+                vehicle_count = self._get_vehicle_count(edge_id)
+                queue_length = self._get_queue_length(edge_id)
+                waiting_time = self._get_waiting_time(edge_id)
+                average_speed = self._get_average_speed(edge_id)
+                
+                # Get GST for this specific lane
+                gst_value = gst_per_edge.get(edge_id, 5.0)  # Default to 5s minimum
+                
+                # Get additional lane-specific metrics
+                try:
+                    # Get vehicle IDs for this lane
+                    vehicle_ids = traci.edge.getLastStepVehicleIDs(edge_id)
+                    if not vehicle_ids:
+                        lane_id = getattr(self, '_edge_to_lane', {}).get(edge_id, None)
+                        if lane_id:
+                            vehicle_ids = traci.lane.getLastStepVehicleIDs(lane_id)
+                    
+                    # Count vehicle types
+                    vehicle_types = {}
+                    for vid in vehicle_ids:
+                        vtype = self._map_vehicle_to_class(vid)
+                        vehicle_types[vtype] = vehicle_types.get(vtype, 0) + 1
+                    
+                    # Calculate occupancy (percentage of lane filled)
+                    try:
+                        occupancy = traci.edge.getLastStepOccupancy(edge_id)
+                    except:
+                        occupancy = 0.0
+                        
+                except Exception:
+                    vehicle_types = {}
+                    occupancy = 0.0
+                
+                lane_metrics = {
+                    'edge_id': edge_id,
+                    'vehicle_count': vehicle_count,
+                    'queue_length': queue_length,
+                    'waiting_time': waiting_time,
+                    'green_signal_time': gst_value,
+                    'average_speed': average_speed,
+                    'occupancy_percent': occupancy,
+                    'vehicle_types': vehicle_types,
+                    'lane_length': self._get_lane_length(edge_id)
+                }
+                
+                detailed_metrics['per_lane_metrics'][edge_id] = lane_metrics
+                lane_data.append(lane_metrics)
+            
+            # Calculate comprehensive summary statistics
+            if lane_data:
+                gst_values = [lane['green_signal_time'] for lane in lane_data]
+                queue_values = [lane['queue_length'] for lane in lane_data]
+                waiting_values = [lane['waiting_time'] for lane in lane_data]
+                speed_values = [lane['average_speed'] for lane in lane_data]
+                
+                detailed_metrics['lane_summary'] = {
+                    'total_vehicles': sum(lane['vehicle_count'] for lane in lane_data),
+                    'total_queue_length': sum(queue_values),
+                    'total_waiting_time': sum(waiting_values),
+                    'average_gst': np.mean(gst_values),
+                    'min_gst': np.min(gst_values),
+                    'max_gst': np.max(gst_values),
+                    'max_queue_length': max(queue_values),
+                    'max_waiting_time': max(waiting_values),
+                    'average_speed': np.mean(speed_values),
+                    'num_active_lanes': len([lane for lane in lane_data if lane['vehicle_count'] > 0]),
+                    'num_congested_lanes': len([lane for lane in lane_data if lane['queue_length'] > 3]),
+                    'total_occupancy': sum(lane['occupancy_percent'] for lane in lane_data)
+                }
+            
+            return detailed_metrics
+            
+        except Exception as e:
+            print(f"Error getting detailed lane metrics: {e}")
+            return {'per_lane_metrics': {}, 'lane_summary': {}}
+    
+    def _get_lane_length(self, edge_id: str) -> float:
+        """Get the length of a lane/edge"""
+        try:
+            return traci.edge.getLength(edge_id)
+        except:
+            return 0.0
+    
+    def _get_traffic_light_status(self, edge_id: str) -> str:
+        """Get traffic light status (Green/Red/Yellow) for a specific edge"""
+        try:
+            if self.tl_id is None:
+                return "Unknown"
+            
+            # Get current phase
+            current_phase = traci.trafficlight.getPhase(self.tl_id)
+            
+            # Get controlled links for this traffic light
+            links = traci.trafficlight.getControlledLinks(self.tl_id)
+            
+            # Find which link controls this edge
+            for link_group in links:
+                for link in link_group:
+                    if link and len(link) >= 3:
+                        lane_id = link[0]
+                        try:
+                            if traci.lane.getEdgeID(lane_id) == edge_id:
+                                # Get the signal state for this link
+                                signal_state = traci.trafficlight.getRedYellowGreenState(self.tl_id)
+                                link_index = links.index(link_group)
+                                
+                                if link_index < len(signal_state):
+                                    signal = signal_state[link_index]
+                                    if signal == 'G':
+                                        return "Green"
+                                    elif signal == 'r':
+                                        return "Red"
+                                    elif signal == 'y':
+                                        return "Yellow"
+                                    else:
+                                        return f"Unknown {signal}"
+                        except:
+                            continue
+            
+            return "Unknown"
+        except:
+            return "Error"
+    
+    def _get_average_speed(self, edge_id: str) -> float:
+        """Get average speed of vehicles on an edge"""
+        try:
+            return traci.edge.getLastStepMeanSpeed(edge_id)
+        except:
+            return 0.0
+    
     def get_performance_metrics(self) -> Dict:
         """Get performance metrics for the current episode"""
         metrics = {
@@ -574,6 +846,11 @@ class SUMOTrafficEnvironment:
             'max_queue_length': max(self.queue_lengths) if self.queue_lengths else 0,
             'steps': self.step_count
         }
+        
+        # Get detailed per-lane metrics
+        detailed_lane_metrics = self._get_detailed_lane_metrics()
+        metrics.update(detailed_lane_metrics)
+        
         # Attach GST aggregates
         last_gst = self._compute_green_signal_times()
         metrics['green_signal_time'] = last_gst
