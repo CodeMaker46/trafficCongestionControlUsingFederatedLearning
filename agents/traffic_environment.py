@@ -90,44 +90,128 @@ class SUMOTrafficEnvironment:
 
         # Discover traffic light and incoming edges if not provided
         try:
+            # First, verify TL ID if provided
+            if self.tl_id is not None:
+                tls_available = traci.trafficlight.getIDList()
+                if self.tl_id not in tls_available:
+                    print(f"\n⚠️  WARNING: Specified TL ID '{self.tl_id}' not found in network!")
+                    print(f"   Available TLs: {len(tls_available)} total")
+                    if tls_available:
+                        print(f"   First 5: {tls_available[:5]}")
+                    print(f"   Will try to find target intersection by edges...")
+                    self.tl_id = None  # Reset to auto-discover
+            
             if self.tl_id is None:
                 tls_ids = traci.trafficlight.getIDList()
+                print(f"\n🔍 Discovering intersections... Found {len(tls_ids)} traffic lights")
+                
                 # Look for specific intersection with your edge names
-                target_edges = ['56723584#42_0', '532739771#0', '36801848#0', '1120576436#1', '532739771#1']
+                # Support both with and without lane suffix (_0, _1, etc.)
+                target_edges_exact = ['56723584#42_0', '532739771#0', '36801848#0', '1120576436#1', '532739771#1']
+                target_edges_base = ['56723584#42', '532739771', '36801848', '1120576436', '532739771']  # Base names without suffix
+                
                 target_intersection_id = None
+                best_match_score = 0
+                best_match_info = None
                 
                 for tl_id in tls_ids:
                     try:
                         links = traci.trafficlight.getControlledLinks(tl_id)
                         edge_ids = []
+                        lane_ids = []
+                        
+                        # Extract all edges from controlled links
                         for conn_group in links:
                             for conn in conn_group:
                                 if conn and len(conn) >= 1:
                                     try:
-                                        edge_id = traci.lane.getEdgeID(conn[0])
+                                        lane_id = conn[0]
+                                        edge_id = traci.lane.getEdgeID(lane_id)
                                         if edge_id not in edge_ids:
                                             edge_ids.append(edge_id)
-                                    except:
+                                        if lane_id not in lane_ids:
+                                            lane_ids.append(lane_id)
+                                    except Exception as e:
                                         pass
                         
-                        # Check if this intersection controls your target edges
-                        matching_edges = [edge for edge in edge_ids if edge in target_edges]
-                        print(f"Checking TLS {tl_id}: {len(edge_ids)} edges, {len(matching_edges)} matches")
-                        print(f"  All edges: {edge_ids}")
-                        print(f"  Target edges: {target_edges}")
-                        print(f"  Matching: {matching_edges}")
+                        # Exact match check
+                        exact_matches = [edge for edge in edge_ids if edge in target_edges_exact]
                         
-                        if len(matching_edges) >= 3:  # At least 3 of your target edges
+                        # Base name match (handle variations like 56723584#42 vs 56723584#42_0)
+                        base_matches = []
+                        for target_base in target_edges_base:
+                            for edge in edge_ids:
+                                # Check if edge starts with target base (handles #0, #1, _0, _1 suffixes)
+                                if edge.startswith(target_base):
+                                    base_matches.append(edge)
+                                    break
+                        
+                        # Calculate match score (exact matches worth more)
+                        match_score = len(exact_matches) * 2 + len(base_matches)
+                        
+                        # Debug output
+                        if len(exact_matches) > 0 or len(base_matches) > 0:
+                            print(f"\n📊 TLS {tl_id}:")
+                            print(f"   Total edges: {len(edge_ids)}")
+                            print(f"   Exact matches: {len(exact_matches)} - {exact_matches}")
+                            print(f"   Base matches: {len(base_matches)} - {base_matches}")
+                            print(f"   Match score: {match_score}")
+                        
+                        # Update best match
+                        if match_score > best_match_score:
+                            best_match_score = match_score
+                            best_match_info = {
+                                'tl_id': tl_id,
+                                'edges': edge_ids,
+                                'exact_matches': exact_matches,
+                                'base_matches': base_matches,
+                                'score': match_score
+                            }
+                        
+                        # If we have at least 3 exact matches or 4+ base matches, use this
+                        if len(exact_matches) >= 3 or (len(exact_matches) >= 2 and len(base_matches) >= 4):
                             target_intersection_id = tl_id
-                            print(f"✅ FOUND TARGET INTERSECTION: {tl_id}")
-                            print(f"✅ Controlled roads: {edge_ids}")
-                            print(f"✅ Matching your target edges: {matching_edges}")
+                            print(f"\n✅ FOUND TARGET INTERSECTION: {tl_id}")
+                            print(f"✅ Exact matches: {exact_matches}")
+                            print(f"✅ Base matches: {base_matches}")
+                            print(f"✅ All controlled edges: {edge_ids}")
                             break
-                    except:
+                            
+                    except Exception as e:
+                        print(f"⚠️  Error checking TLS {tl_id}: {e}")
                         continue
                 
-                # Use target intersection if found, otherwise first available
-                self.tl_id = target_intersection_id if target_intersection_id else (tls_ids[0] if tls_ids else None)
+                # If no perfect match, use best match found
+                if target_intersection_id is None and best_match_info:
+                    print(f"\n⚠️  No perfect match found. Using best match:")
+                    print(f"✅ Best Match TLS: {best_match_info['tl_id']}")
+                    print(f"✅ Match Score: {best_match_info['score']}")
+                    print(f"✅ Exact matches: {best_match_info['exact_matches']}")
+                    print(f"✅ Base matches: {best_match_info['base_matches']}")
+                    target_intersection_id = best_match_info['tl_id']
+                
+                # Final assignment
+                if target_intersection_id:
+                    self.tl_id = target_intersection_id
+                    print(f"\n✅ Using Traffic Light: {self.tl_id}")
+                elif tls_ids:
+                    print(f"\n⚠️  Target intersection not found. Using first available: {tls_ids[0]}")
+                    self.tl_id = tls_ids[0]
+                else:
+                    print(f"\n❌ No traffic lights found in network!")
+                    self.tl_id = None
+            
+            # Print intersection info clearly
+            if self.tl_id is not None:
+                print(f"\n{'='*80}")
+                print(f"🚦 CONTROLLING INTERSECTION: {self.tl_id}")
+                print(f"{'='*80}")
+                try:
+                    pos = traci.junction.getPosition(self.tl_id)
+                    print(f"📍 Position: X={pos[0]:.2f}, Y={pos[1]:.2f}")
+                except:
+                    pass
+                
             if self.tl_id is not None:
                 # Determine incoming edges from controlled links (unique upstream lane edges)
                 links = traci.trafficlight.getControlledLinks(self.tl_id)
@@ -171,9 +255,19 @@ class SUMOTrafficEnvironment:
                                 break
                     # Track up to 5 prioritized edges for metrics/printing
                     self.incoming_edges = prioritized[:5]
+                    
+                    # Print controlled edges
+                    print(f"\n🛣️  CONTROLLED EDGES ({len(self.incoming_edges)}):")
+                    for i, edge in enumerate(self.incoming_edges, 1):
+                        print(f"   {i}. {edge}")
+                    print(f"{'='*80}\n")
                 except Exception:
                     # Fallback: first discovered (up to 5)
                     self.incoming_edges = ordered_unique[:5]
+                    print(f"\n🛣️  CONTROLLED EDGES ({len(self.incoming_edges)}):")
+                    for i, edge in enumerate(self.incoming_edges, 1):
+                        print(f"   {i}. {edge}")
+                    print(f"{'='*80}\n")
                 # Map one representative lane for each incoming edge for GUI placement
                 self._edge_to_lane: Dict[str, str] = {}
                 for conn_group in links:
@@ -216,12 +310,35 @@ class SUMOTrafficEnvironment:
         
     def reset(self) -> np.ndarray:
         """Reset environment and return initial state"""
-        if self.episode_count > 0:
-            self.stop_simulation()
-            time.sleep(1)  # Brief pause between episodes
+        try:
+            if self.episode_count > 0:
+                # For subsequent episodes, restart simulation properly
+                # SUMO needs to be restarted for new episodes
+                print(f"🔄 Resetting for Episode {self.episode_count + 1}...")
+                self.stop_simulation()
+                time.sleep(0.5)  # Brief pause
+                self.start_simulation()
+            else:
+                # First episode - start simulation
+                self.start_simulation()
             
-        self.start_simulation()
-        return self.get_state()
+            self.episode_count += 1
+            return self.get_state()
+        except Exception as e:
+            print(f"⚠️  Error in reset: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback: try to restart
+            try:
+                if self.episode_count > 0:
+                    self.stop_simulation()
+                    time.sleep(1)
+                self.start_simulation()
+                self.episode_count += 1
+                return self.get_state()
+            except Exception as e2:
+                print(f"❌ Failed to reset environment: {e2}")
+                return np.zeros(self.state_size)
         
     def get_state(self) -> np.ndarray:
         """Get current state of the traffic environment"""
@@ -557,12 +674,31 @@ class SUMOTrafficEnvironment:
         try:
             if self.tl_id is None:
                 return
+            
+            # Verify TL exists
+            try:
+                tls = traci.trafficlight.getIDList()
+                if self.tl_id not in tls:
+                    print(f"⚠️  Warning: Traffic light '{self.tl_id}' not found in network!")
+                    print(f"   Available TLs: {tls[:5]}... (showing first 5)")
+                    # Try to find alternative
+                    if tls:
+                        print(f"   Using first available: {tls[0]}")
+                        self.tl_id = tls[0]
+                    else:
+                        print(f"   No traffic lights available!")
+                        return
+            except Exception as e:
+                print(f"⚠️  Error checking TL list: {e}")
+                return
+            
             # Use phase indices modulo available phases for generality
             desired = int(phase) % max(1, self.num_phases)
             sim_time = traci.simulation.getTime()
             try:
                 current = traci.trafficlight.getPhase(self.tl_id)
-            except Exception:
+            except Exception as e:
+                print(f"⚠️  Error getting current phase for {self.tl_id}: {e}")
                 current = -1
             # Safe switching with yellow insertion when crossing directions
             def is_green(p: int) -> bool:
@@ -618,37 +754,67 @@ class SUMOTrafficEnvironment:
             print(f"Error setting traffic light phase: {e}")
     
     def _calculate_reward(self) -> float:
-        """Calculate reward based on traffic performance"""
+        """Calculate reward based on traffic performance - Improved normalized formula"""
         try:
             # Aggregate metrics across discovered incoming edges
             waits = 0.0
             queues = 0
             vehs = 0
+            speeds = 0.0
+            edge_count = 0
+            
             for e in self.incoming_edges:
-                waits += self._get_waiting_time(e)
-                q = self._get_queue_length(e)
-                queues += q
-                vehs += self._get_vehicle_count(e)
+                if e:  # Only count valid edges
+                    waits += self._get_waiting_time(e)
+                    q = self._get_queue_length(e)
+                    queues += q
+                    vehs += self._get_vehicle_count(e)
+                    speeds += self._get_average_speed(e)
+                    edge_count += 1
 
             # Update metrics
             self.total_waiting_time += waits
             self.total_vehicles += vehs
             self.queue_lengths.append(queues)
             
-            # Reward function: minimize waiting time, queue length, and GST
-            # Stronger penalties to push the policy to reduce queues quickly
-            waiting_penalty = -waits / 100.0
-            queue_penalty = -queues / 6.0
+            # Normalized reward function (better scaling)
+            # Normalize by number of edges to get per-edge metrics
+            if edge_count > 0:
+                avg_waiting = waits / edge_count
+                avg_queue = queues / edge_count
+                avg_speed = speeds / edge_count if edge_count > 0 else 0.0
+            else:
+                avg_waiting = waits
+                avg_queue = queues
+                avg_speed = 0.0
+            
+            # Reward components (normalized to reasonable ranges)
+            # Waiting penalty: -0.1 to -10 per second (normalized)
+            waiting_penalty = -min(avg_waiting / 10.0, 10.0)  # Cap at -10
+            
+            # Queue penalty: -0.5 to -5 per vehicle (normalized)
+            queue_penalty = -min(avg_queue / 2.0, 5.0)  # Cap at -5
+            
+            # GST penalty (if available)
             try:
                 gst_avg = float(self.gst_history[-1]['avg_gst']) if self.gst_history else 0.0
+                gst_penalty = -min(gst_avg / 10.0, 3.0)  # Cap at -3
             except Exception:
-                gst_avg = 0.0
-            gst_penalty = -gst_avg / 6.0
+                gst_penalty = 0.0
             
-            # Small positive reward for keeping traffic flowing
-            flow_reward = 1.0 if queues < 5 else 0.0
+            # Speed bonus (higher speed = better flow)
+            speed_bonus = min(avg_speed / 10.0, 2.0)  # Up to +2 for good speed
             
-            total_reward = waiting_penalty + queue_penalty + gst_penalty + flow_reward
+            # Flow reward (positive for low congestion)
+            if avg_queue < 3 and avg_waiting < 50:
+                flow_reward = 2.0  # Good flow
+            elif avg_queue < 5:
+                flow_reward = 1.0  # Acceptable flow
+            else:
+                flow_reward = 0.0  # Congested
+            
+            # Total reward (typically ranges from -18 to +4)
+            total_reward = waiting_penalty + queue_penalty + gst_penalty + speed_bonus + flow_reward
             
             return total_reward
             

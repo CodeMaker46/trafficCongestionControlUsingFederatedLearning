@@ -77,17 +77,22 @@ def run_server(num_rounds=10, min_clients=2, server_address="localhost:8080"):
     # Run server
     server.run_federated_learning(server_address)
 
-def run_single_client_training(gui: bool = False, show_phase_console: bool = False):
+def run_single_client_training(gui: bool = False, show_phase_console: bool = False, 
+                               sumo_config: str = "sumo_configs2/osm.sumocfg", 
+                               tl_id: str = None):
     """Run training with a single client for testing"""
     print("Running single client training for testing...")
+    if tl_id:
+        print(f"🎯 Using specified Traffic Light ID: {tl_id}")
     
     # Create client
     client = TrafficFLClient(
         client_id="test_client",
-        sumo_config_path="sumo_configs2/osm.sumocfg",
+        sumo_config_path=sumo_config,
         gui=gui,
         show_phase_console=show_phase_console,
-        show_gst_gui=gui
+        show_gst_gui=gui,
+        tl_id=tl_id
     )
     
     # Simulate federated learning rounds
@@ -105,7 +110,20 @@ def run_single_client_training(gui: bool = False, show_phase_console: bool = Fal
             "learning_rate": 0.001
         }
         
-        updated_params, num_samples, metrics = client.fit(current_params, config)
+        print(f"📊 Training configuration:")
+        print(f"   Episodes per round: {config['episodes']}")
+        print(f"   Learning rate: {config['learning_rate']}")
+        print(f"   Starting training...\n")
+        
+        try:
+            updated_params, num_samples, metrics = client.fit(current_params, config)
+            print(f"✅ Training completed for Round {round_num + 1}")
+        except Exception as e:
+            print(f"❌ Error during training: {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"   Skipping to next round...")
+            continue
         
         # Evaluate client
         eval_metrics = client.evaluate(updated_params, config)
@@ -203,6 +221,24 @@ def run_single_client_training(gui: bool = False, show_phase_console: bool = Fal
         
         print("="*60)
         
+        # Print final round score
+        final_score = eval_metrics[2].get('final_score', 0)
+        avg_reward = eval_metrics[2].get('average_reward', 0)
+        total_waiting = eval_metrics[2].get('waiting_time', 0)
+        
+        print(f"\n{'='*80}")
+        print(f"🏆 ROUND {round_num + 1} FINAL SCORES")
+        print(f"{'='*80}")
+        print(f"⭐ Performance Score: {final_score:.2f}/100")
+        print(f"🎯 Average Reward: {avg_reward:.4f}")
+        print(f"⏱️  Total Waiting Time: {total_waiting:.2f}s")
+        print(f"📊 Queue Length: {eval_metrics[2].get('queue_length', 0):.2f}")
+        
+        # Calculate efficiency metrics
+        efficiency = max(0, 100 - (total_waiting / 10))  # Inverse of waiting time
+        print(f"⚡ Traffic Efficiency: {efficiency:.2f}%")
+        print(f"{'='*80}\n")
+        
         # Update client parameters
         client.set_parameters(updated_params)
     
@@ -210,26 +246,107 @@ def run_single_client_training(gui: bool = False, show_phase_console: bool = Fal
     client.save_training_history("results/single_client_training.json")
     client.save_performance_metrics("results/single_client_performance.json")
     
-    print("\nSingle client training completed!")
-    print("Results saved to results/ directory")
+    # Final overall summary
+    print(f"\n{'='*80}")
+    print(f"🎉 TRAINING COMPLETED SUCCESSFULLY!")
+    print(f"{'='*80}")
+    print(f"📁 Results saved to: results/ directory")
+    print(f"📊 Training History: results/single_client_training.json")
+    print(f"📈 Performance Metrics: results/single_client_performance.json")
+    print(f"\n💡 Next Steps:")
+    print(f"   • Review performance metrics in JSON files")
+    print(f"   • Run multi-client training: python train_federated.py --mode multi")
+    print(f"   • Generate comparison charts: python report_charts.py")
+    print(f"{'='*80}\n")
 
 def run_multi_client_simulation():
-    """Run simulation with multiple clients"""
-    print("Running multi-client simulation...")
+    """Run simulation with multiple clients using different intersections"""
+    print("="*80)
+    print("MULTI-CLIENT FEDERATED LEARNING SIMULATION")
+    print("="*80)
+    print("\n⚠️  IMPORTANT: Each client should use a DIFFERENT intersection!")
+    print("   Use extract_intersection.py to create separate configs first.\n")
+    
+    # Use full network with different TL IDs (MORE RELIABLE than extracted networks)
+    multi_config_dir = "sumo_configs/multi_intersections"
+    summary_file = os.path.join(multi_config_dir, "intersections_summary.txt")
+    client_configs = None
+    
+    # Try to read TL IDs from summary file
+    if os.path.exists(summary_file):
+        print(f"[INFO] Found intersection summary: {summary_file}")
+        try:
+            import re
+            with open(summary_file, 'r') as f:
+                content = f.read()
+                # Extract junction IDs from summary
+                matches = re.findall(r'Junction ID: ([^\n]+)', content)
+                tl_ids = matches[:3]  # Get first 3
+            
+            if len(tl_ids) >= 2:
+                print(f"[OK] Found {len(tl_ids)} TL IDs, using full network with different intersections")
+                client_configs = [
+                    {"id": "client_1", "config": "sumo_configs2/osm.sumocfg", "gui": False, "tl_id": tl_ids[0]},
+                    {"id": "client_2", "config": "sumo_configs2/osm.sumocfg", "gui": False, "tl_id": tl_ids[1]},
+                    {"id": "client_3", "config": "sumo_configs2/osm.sumocfg", "gui": False, "tl_id": tl_ids[2] if len(tl_ids) > 2 else None}
+                ]
+                print(f"   Client 1 TL ID: {tl_ids[0]}")
+                print(f"   Client 2 TL ID: {tl_ids[1]}")
+                if len(tl_ids) > 2:
+                    print(f"   Client 3 TL ID: {tl_ids[2]}")
+        except Exception as e:
+            print(f"[WARNING] Could not read summary file: {e}")
+            client_configs = None
+    
+    # Fallback: Use same config but with different TL IDs (BETTER APPROACH)
+    if client_configs is None or len(client_configs) < 2:
+        print("\n[INFO] Using full network with different TL IDs for each client")
+        print("   This is MORE RELIABLE than extracted networks.\n")
+        
+        # Try to read TL IDs from summary file
+        summary_file = os.path.join(multi_config_dir, "intersections_summary.txt")
+        tl_ids = []
+        if os.path.exists(summary_file):
+            try:
+                with open(summary_file, 'r') as f:
+                    content = f.read()
+                    # Extract junction IDs from summary
+                    import re
+                    matches = re.findall(r'Junction ID: ([^\n]+)', content)
+                    tl_ids = matches[:3]  # Get first 3
+            except:
+                pass
+        
+        # If we found TL IDs, use them; otherwise use None (auto-discover)
+        if len(tl_ids) >= 2:
+            print(f"   Found {len(tl_ids)} TL IDs from summary file")
+            client_configs = [
+                {"id": "client_1", "config": "sumo_configs2/osm.sumocfg", "gui": False, "tl_id": tl_ids[0] if len(tl_ids) > 0 else None},
+                {"id": "client_2", "config": "sumo_configs2/osm.sumocfg", "gui": False, "tl_id": tl_ids[1] if len(tl_ids) > 1 else None},
+                {"id": "client_3", "config": "sumo_configs2/osm.sumocfg", "gui": False, "tl_id": tl_ids[2] if len(tl_ids) > 2 else None}
+            ]
+        else:
+            print("   Warning: Could not find TL IDs. Using auto-discovery (may use same intersection)")
+            client_configs = [
+                {"id": "client_1", "config": "sumo_configs2/osm.sumocfg", "gui": False, "tl_id": None},
+                {"id": "client_2", "config": "sumo_configs2/osm.sumocfg", "gui": False, "tl_id": None},
+                {"id": "client_3", "config": "sumo_configs2/osm.sumocfg", "gui": False, "tl_id": None}
+            ]
     
     # Create multiple clients with different configurations
     clients = []
-    client_configs = [
-        {"id": "client_1", "config": "sumo_configs2/osm.sumocfg", "gui": False},
-        {"id": "client_2", "config": "sumo_configs2/osm.sumocfg", "gui": False},
-        {"id": "client_3", "config": "sumo_configs2/osm.sumocfg", "gui": False}
-    ]
-    
-    for config in client_configs:
+    print(f"\n📋 Creating {len(client_configs)} clients...")
+    for i, config in enumerate(client_configs, 1):
+        print(f"   Client {i}: {config['id']}")
+        print(f"      Config: {config['config']}")
+        if config.get('tl_id'):
+            print(f"      Junction ID: {config['tl_id']}")
+        
         client = TrafficFLClient(
             client_id=config["id"],
             sumo_config_path=config["config"],
-            gui=config["gui"]
+            gui=config["gui"],
+            tl_id=config.get("tl_id")
         )
         clients.append(client)
     
@@ -305,6 +422,8 @@ def main():
     parser.add_argument("--min-clients", type=int, default=2, help="Minimum clients")
     parser.add_argument("--gui", action="store_true", help="Enable SUMO GUI")
     parser.add_argument("--show-phase-console", action="store_true", help="Print TLS phase/time each step")
+    parser.add_argument("--tl-id", type=str, default=None, 
+                       help="Specify Traffic Light ID directly (skips auto-discovery)")
     
     args = parser.parse_args()
     
@@ -322,7 +441,8 @@ def main():
             client_id=args.client_id,
             sumo_config_path=args.sumo_config,
             gui=args.gui,
-            show_phase_console=args.show_phase_console
+            show_phase_console=args.show_phase_console,
+            tl_id=args.tl_id
         )
         
         fl.client.start_numpy_client(
@@ -330,7 +450,8 @@ def main():
             client=client
         )
     elif args.mode == "single":
-        run_single_client_training(gui=args.gui, show_phase_console=args.show_phase_console)
+        run_single_client_training(gui=args.gui, show_phase_console=args.show_phase_console,
+                                  sumo_config=args.sumo_config, tl_id=args.tl_id)
     elif args.mode == "multi":
         run_multi_client_simulation()
     

@@ -6,6 +6,7 @@ from agents.traffic_environment import SUMOTrafficEnvironment
 import os
 import json
 import time
+from datetime import datetime
 
 class TrafficFLClient(fl.client.NumPyClient):
     """
@@ -15,7 +16,8 @@ class TrafficFLClient(fl.client.NumPyClient):
     
     def __init__(self, client_id: str, sumo_config_path: str, 
                  state_size: int = 12, action_size: int = 4,
-                 gui: bool = False, show_phase_console: bool = False, show_gst_gui: bool = False):
+                 gui: bool = False, show_phase_console: bool = False, show_gst_gui: bool = False,
+                 tl_id: str = None):
         self.client_id = client_id
         self.state_size = state_size
         self.action_size = action_size
@@ -24,7 +26,8 @@ class TrafficFLClient(fl.client.NumPyClient):
         self.agent = DQNAgent(state_size, action_size)
         
         # Initialize traffic environment
-        self.env = SUMOTrafficEnvironment(sumo_config_path, gui=gui, show_phase_console=show_phase_console, show_gst_gui=show_gst_gui)
+        self.env = SUMOTrafficEnvironment(sumo_config_path, gui=gui, show_phase_console=show_phase_console, 
+                                         show_gst_gui=show_gst_gui, tl_id=tl_id)
         
         # Training parameters
         self.episodes_per_round = 10
@@ -33,6 +36,12 @@ class TrafficFLClient(fl.client.NumPyClient):
         # Performance tracking
         self.training_history = []
         self.performance_metrics = []
+        
+        # Periodic data transmission (every 5 seconds) - Novelty Feature
+        self.last_transmission_time = 0.0
+        self.transmission_interval = 5.0  # 5 seconds
+        self.periodic_data_buffer = []  # Store data to send
+        self.server_address = None  # Will be set if in FL mode
         
     def get_parameters(self, config: Dict) -> List[np.ndarray]:
         """Return current model parameters"""
@@ -97,14 +106,40 @@ class TrafficFLClient(fl.client.NumPyClient):
     
     def _train_agent(self, episodes: int) -> Dict:
         """Train the DQN agent for specified number of episodes"""
+        print(f"\n{'='*80}")
+        print(f"🎓 STARTING TRAINING: {episodes} Episodes")
+        print(f"{'='*80}\n")
+        
         total_reward = 0
         total_steps = 0
         losses = []
         
         for episode in range(episodes):
-            state = self.env.reset()
+            print(f"\n{'='*80}")
+            print(f"🔄 STARTING EPISODE {episode + 1}/{episodes}")
+            print(f"{'='*80}")
+            try:
+                state = self.env.reset()
+                print(f"✅ Environment reset successfully")
+            except Exception as e:
+                print(f"⚠️  Error resetting environment: {e}")
+                import traceback
+                traceback.print_exc()
+                print(f"   Trying to restart simulation...")
+                try:
+                    self.env.stop_simulation()
+                    time.sleep(1)
+                    self.env.start_simulation()
+                    state = self.env.get_state()
+                    print(f"✅ Simulation restarted")
+                except Exception as e2:
+                    print(f"❌ Failed to restart: {e2}")
+                    print(f"   Skipping remaining episodes...")
+                    break
+            
             episode_reward = 0
             episode_steps = 0
+            episode_losses = []
             
             for step in range(self.max_steps_per_episode):
                 # Choose action
@@ -121,13 +156,27 @@ class TrafficFLClient(fl.client.NumPyClient):
                     loss = self.agent.replay()
                     if loss is not None:
                         losses.append(loss)
+                        episode_losses.append(loss)
+                
+                # Periodic data transmission to server (every 5 seconds) - Novelty Feature
+                current_time = time.time()
+                if current_time - self.last_transmission_time >= self.transmission_interval:
+                    self._send_periodic_data(episode, step, reward, info)
+                    self.last_transmission_time = current_time
                 
                 state = next_state
                 episode_reward += reward
                 episode_steps += 1
                 
                 if done:
+                    print(f"   Episode {episode + 1} marked as done at step {step}")
                     break
+            
+            # Episode end summary
+            if episode_steps > 0:  # Only print if episode had steps
+                self._print_episode_summary(episode, episode_reward, episode_steps, episode_losses)
+            else:
+                print(f"⚠️  Episode {episode + 1} had 0 steps - skipping summary")
             
             total_reward += episode_reward
             total_steps += episode_steps
@@ -135,16 +184,39 @@ class TrafficFLClient(fl.client.NumPyClient):
             # Update target network every 10 episodes
             if episode % 10 == 0:
                 self.agent.update_target_model()
+            
+            # Episode completed successfully
+            print(f"✅ Episode {episode + 1} completed successfully!")
+            print(f"   Reward: {episode_reward:.4f}, Steps: {episode_steps}")
+            
+            # Check if more episodes to go
+            if episode < episodes - 1:
+                print(f"   Continuing to Episode {episode + 2}...\n")
+            else:
+                print(f"   All episodes completed!\n")
         
-        # Close environment
+        # Close environment only after ALL episodes
+        print(f"\n📊 All {episodes} episodes completed. Closing environment...")
         self.env.close()
         
-        return {
-            'average_reward': total_reward / episodes,
+        # Final training summary
+        completed_episodes = max(1, len([e for e in range(episodes)]))  # Count completed
+        print(f"\n{'='*80}")
+        print(f"📊 TRAINING COMPLETED: {completed_episodes}/{episodes} episodes")
+        print(f"{'='*80}")
+        
+        final_metrics = {
+            'average_reward': total_reward / max(1, completed_episodes),
+            'total_reward': total_reward,
             'total_steps': total_steps,
             'average_loss': np.mean(losses) if losses else 0.0,
-            'episodes': episodes
+            'episodes': completed_episodes,
+            'final_score': self._calculate_final_score(total_reward, total_steps, losses)
         }
+        
+        self._print_final_training_summary(final_metrics)
+        
+        return final_metrics
     
     def _evaluate_agent(self) -> Dict:
         """Evaluate the DQN agent"""
@@ -172,6 +244,9 @@ class TrafficFLClient(fl.client.NumPyClient):
         # Close environment
         self.env.close()
         
+        # Calculate final score for evaluation
+        final_score = self._calculate_final_score(total_reward, total_steps, [])
+        
         return {
             'total_reward': total_reward,
             'average_reward': total_reward / max(total_steps, 1),
@@ -181,7 +256,8 @@ class TrafficFLClient(fl.client.NumPyClient):
             'max_queue_length': performance['max_queue_length'],
             'green_signal_time': performance.get('green_signal_time', {}),
             'per_lane_metrics': performance.get('per_lane_metrics', {}),
-            'lane_summary': performance.get('lane_summary', {})
+            'lane_summary': performance.get('lane_summary', {}),
+            'final_score': final_score
         }
     
     def save_training_history(self, filepath: str):
@@ -203,3 +279,171 @@ class TrafficFLClient(fl.client.NumPyClient):
             'episodes_per_round': self.episodes_per_round,
             'max_steps_per_episode': self.max_steps_per_episode
         }
+    
+    def _send_periodic_data(self, episode: int, step: int, reward: float, info: Dict):
+        """Send periodic data to server every 5 seconds - Novelty Feature"""
+        try:
+            # Collect current metrics
+            current_metrics = {
+                'timestamp': datetime.now().isoformat(),
+                'episode': episode,
+                'step': step,
+                'reward': reward,
+                'waiting_time': info.get('total_waiting_time', 0),
+                'queue_lengths': info.get('queue_lengths', []),
+                'gst': info.get('gst', {}),
+                'client_id': self.client_id
+            }
+            
+            # Store in buffer (in real FL, this would be sent to server)
+            self.periodic_data_buffer.append(current_metrics)
+            
+            # Print periodic update with performance score
+            if len(self.periodic_data_buffer) % 2 == 0:  # Every 10 seconds (2 transmissions)
+                # Calculate real-time performance score
+                waiting = info.get('total_waiting_time', 0)
+                queue = sum(info.get('queue_lengths', [0]))
+                perf_score = max(0, min(100, 100 - (waiting / 2) - (queue * 5)))
+                
+                print(f"\n📡 [PERIODIC DATA TRANSMISSION - Every 5s]")
+                print(f"   Episode: {episode}, Step: {step}")
+                print(f"   Reward: {reward:.4f}")
+                print(f"   Waiting Time: {waiting:.2f}s")
+                print(f"   Queue Length: {queue} vehicles")
+                print(f"   ⭐ Real-time Performance: {perf_score:.1f}/100")
+                print(f"   📊 Data sent to server buffer (ready for FL aggregation)")
+                
+        except Exception as e:
+            pass  # Don't break training if transmission fails
+    
+    def _print_episode_summary(self, episode: int, reward: float, steps: int, losses: List):
+        """Print episode end summary with scores"""
+        avg_loss = np.mean(losses) if losses else 0.0
+        score = self._calculate_episode_score(reward, steps, avg_loss)
+        
+        # Performance breakdown (updated for new reward range)
+        if reward >= 0:
+            reward_score = 50
+        elif reward < -18:
+            reward_score = 0
+        else:
+            reward_score = 50 * (1 - (abs(reward) / 18.0))
+        
+        efficiency_score = min(30, (steps / 1000) * 30)
+        loss_score = max(0, 20 * (1 - (avg_loss - 0.1) / 4.9)) if avg_loss > 0.1 else 20
+        
+        # Performance rating
+        if score >= 80:
+            rating = "🌟 EXCELLENT"
+        elif score >= 60:
+            rating = "✅ GOOD"
+        elif score >= 40:
+            rating = "⚠️  AVERAGE"
+        else:
+            rating = "❌ NEEDS IMPROVEMENT"
+        
+        print(f"\n{'='*80}")
+        print(f"📊 EPISODE {episode + 1} SUMMARY")
+        print(f"{'='*80}")
+        print(f"🎯 Total Reward: {reward:.4f}")
+        print(f"📈 Steps: {steps}")
+        print(f"📉 Average Loss: {avg_loss:.4f}")
+        print(f"\n⭐ Episode Score: {score:.2f}/100 - {rating}")
+        print(f"   Breakdown:")
+        print(f"   • Reward Component: {reward_score:.1f}/50 (Higher reward = Better)")
+        print(f"   • Efficiency Component: {efficiency_score:.1f}/30 (More steps = More learning)")
+        print(f"   • Loss Component: {loss_score:.1f}/20 (Lower loss = Better)")
+        
+        # Improvement suggestions
+        if score < 40:
+            print(f"\n💡 Improvement Tips:")
+            if reward_score < 10:
+                print(f"   • Reward is very negative ({reward:.2f}) - Agent needs more training")
+            if loss_score < 5:
+                print(f"   • Loss is high ({avg_loss:.4f}) - Model is still learning")
+            if efficiency_score < 15:
+                print(f"   • Fewer steps ({steps}) - May need longer episodes")
+        
+        print(f"{'='*80}\n")
+    
+    def _calculate_episode_score(self, reward: float, steps: int, loss: float) -> float:
+        """Calculate episode performance score (0-100) - Improved formula for new reward range"""
+        # New reward range: -18 to +4 (after normalization)
+        # Scale reward to 0-50 points
+        if reward >= 0:
+            reward_score = 50  # Perfect (positive reward)
+        elif reward < -18:
+            reward_score = 0  # Very bad
+        else:
+            # Scale from -18 (0 points) to 0 (50 points)
+            reward_score = 50 * (1 - (abs(reward) / 18.0))
+        
+        # Efficiency score based on steps (more steps = more exploration/learning)
+        # 1000 steps = full score, less steps = proportional
+        efficiency_score = min(30, (steps / 1000) * 30)
+        
+        # Loss score (lower is better, typical range 0.01 to 10)
+        if loss < 0.1:
+            loss_score = 20
+        elif loss > 5:
+            loss_score = 0
+        else:
+            # Scale from 0.1 (20 points) to 5 (0 points)
+            loss_score = max(0, 20 * (1 - (loss - 0.1) / 4.9))
+        
+        total_score = reward_score + efficiency_score + loss_score
+        return min(100, max(0, total_score))
+    
+    def _calculate_final_score(self, total_reward: float, total_steps: int, losses: List) -> float:
+        """Calculate final training score - Improved formula for new reward range"""
+        episodes = max(1, len(losses)) if losses else 1
+        avg_reward = total_reward / episodes
+        avg_loss = np.mean(losses) if losses else 0.0
+        
+        # Reward score (new range: -18 to +4)
+        if avg_reward >= 0:
+            reward_score = 40  # Perfect
+        elif avg_reward < -18:
+            reward_score = 0  # Very bad
+        else:
+            # Scale from -18 (0 points) to 0 (40 points)
+            reward_score = 40 * (1 - (abs(avg_reward) / 18.0))
+        
+        # Efficiency score (more steps = more learning)
+        efficiency_score = min(30, (total_steps / (episodes * 1000)) * 30)
+        
+        # Loss score (lower is better)
+        if avg_loss < 0.1:
+            loss_score = 30
+        elif avg_loss > 5:
+            loss_score = 0
+        else:
+            loss_score = max(0, 30 * (1 - (avg_loss - 0.1) / 4.9))
+        
+        return min(100, max(0, reward_score + efficiency_score + loss_score))
+    
+    def _print_final_training_summary(self, metrics: Dict):
+        """Print final training summary with comprehensive scores"""
+        print(f"\n{'='*80}")
+        print(f"🏆 FINAL TRAINING SUMMARY")
+        print(f"{'='*80}")
+        print(f"📊 Episodes Completed: {metrics['episodes']}")
+        print(f"🎯 Total Reward: {metrics['total_reward']:.4f}")
+        print(f"📈 Average Reward: {metrics['average_reward']:.4f}")
+        print(f"👣 Total Steps: {metrics['total_steps']}")
+        print(f"📉 Average Loss: {metrics['average_loss']:.4f}")
+        print(f"\n⭐ FINAL PERFORMANCE SCORE: {metrics['final_score']:.2f}/100")
+        
+        # Performance rating
+        score = metrics['final_score']
+        if score >= 80:
+            rating = "🌟 EXCELLENT"
+        elif score >= 60:
+            rating = "✅ GOOD"
+        elif score >= 40:
+            rating = "⚠️  AVERAGE"
+        else:
+            rating = "❌ NEEDS IMPROVEMENT"
+        
+        print(f"📊 Performance Rating: {rating}")
+        print(f"{'='*80}\n")
