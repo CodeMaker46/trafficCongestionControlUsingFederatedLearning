@@ -37,11 +37,25 @@ class TrafficFLClient(fl.client.NumPyClient):
         self.training_history = []
         self.performance_metrics = []
         
-        # Periodic data transmission (every 5 seconds) - Novelty Feature
+        # Periodic data transmission (every 5 seconds) - Novelty Feature 1
         self.last_transmission_time = 0.0
         self.transmission_interval = 5.0  # 5 seconds
         self.periodic_data_buffer = []  # Store data to send
+        self.periodic_weights_buffer = []  # Store model weights periodically
         self.server_address = None  # Will be set if in FL mode
+        
+        # Novelty Feature 2: Adaptive Learning Rate based on performance
+        self.base_learning_rate = 0.001
+        self.performance_history = []  # Track recent performance
+        self.adaptive_lr_enabled = True
+        
+        # Novelty Feature 3: Client Priority Weighting (based on traffic density)
+        self.client_priority = 1.0  # Default priority
+        self.traffic_density_history = []
+        
+        # Novelty Feature 4: Dynamic Episode Length (adapts to traffic conditions)
+        self.dynamic_episode_length = True
+        self.base_episode_length = self.max_steps_per_episode
         
     def get_parameters(self, config: Dict) -> List[np.ndarray]:
         """Return current model parameters"""
@@ -62,11 +76,36 @@ class TrafficFLClient(fl.client.NumPyClient):
         episodes = config.get("episodes", self.episodes_per_round)
         learning_rate = config.get("learning_rate", 0.001)
         
+        # Novelty Feature 2: Adaptive Learning Rate
+        if self.adaptive_lr_enabled and len(self.performance_history) > 0:
+            # Adjust LR based on recent performance
+            recent_avg = np.mean(self.performance_history[-5:]) if len(self.performance_history) >= 5 else self.performance_history[-1]
+            if recent_avg < 50:  # Poor performance - increase LR
+                learning_rate = min(0.01, learning_rate * 1.2)
+                print(f"[ADAPTIVE LR] Performance low ({recent_avg:.1f}), increasing LR to {learning_rate:.5f}")
+            elif recent_avg > 80:  # Good performance - decrease LR for fine-tuning
+                learning_rate = max(0.0001, learning_rate * 0.9)
+                print(f"[ADAPTIVE LR] Performance high ({recent_avg:.1f}), decreasing LR to {learning_rate:.5f}")
+        
         # Update agent learning rate
         self.agent.learning_rate = learning_rate
         
+        # Clear periodic buffers for new round
+        self.periodic_data_buffer = []
+        self.periodic_weights_buffer = []
+        self.last_transmission_time = 0.0
+        
         # Train the agent
         training_metrics = self._train_agent(episodes)
+        
+        # Include periodic data in metrics
+        training_metrics['periodic_data_transmissions'] = len(self.periodic_data_buffer)
+        training_metrics['periodic_data_buffer'] = self.periodic_data_buffer
+        training_metrics['periodic_weights_snapshots'] = len(self.periodic_weights_buffer)
+        
+        # Novelty Feature 3: Include client priority in metrics (for server weighting)
+        training_metrics['client_priority'] = self.client_priority
+        training_metrics['traffic_density_avg'] = np.mean(self.traffic_density_history) if self.traffic_density_history else 0.0
         
         # Store training history
         self.training_history.append({
@@ -89,8 +128,18 @@ class TrafficFLClient(fl.client.NumPyClient):
         # Set global parameters
         self.set_parameters(parameters)
         
+        # Clear periodic buffers for evaluation
+        self.periodic_data_buffer = []
+        self.periodic_weights_buffer = []
+        self.last_transmission_time = 0.0
+        
         # Evaluate the agent
         evaluation_metrics = self._evaluate_agent()
+        
+        # Include periodic data in evaluation metrics
+        evaluation_metrics['periodic_data_transmissions'] = len(self.periodic_data_buffer)
+        evaluation_metrics['periodic_data_buffer'] = self.periodic_data_buffer
+        evaluation_metrics['periodic_weights_snapshots'] = len(self.periodic_weights_buffer)
         
         # Store performance metrics
         self.performance_metrics.append({
@@ -141,7 +190,23 @@ class TrafficFLClient(fl.client.NumPyClient):
             episode_steps = 0
             episode_losses = []
             
-            for step in range(self.max_steps_per_episode):
+            # Novelty Feature 4: Dynamic Episode Length - check at episode start
+            if self.dynamic_episode_length:
+                # Get initial traffic state
+                initial_info = self.env.get_performance_metrics() if hasattr(self.env, 'get_performance_metrics') else {}
+                queue_sum = sum(initial_info.get('queue_lengths', [0])) if isinstance(initial_info, dict) else 0
+                if queue_sum > 20:  # High traffic - extend episode
+                    current_episode_length = min(1500, self.base_episode_length + 200)
+                    print(f"[DYNAMIC EPISODE] High traffic (queue={queue_sum}), extending to {current_episode_length} steps")
+                elif queue_sum < 5:  # Low traffic - shorten episode
+                    current_episode_length = max(500, self.base_episode_length - 200)
+                    print(f"[DYNAMIC EPISODE] Low traffic (queue={queue_sum}), shortening to {current_episode_length} steps")
+                else:
+                    current_episode_length = self.base_episode_length
+            else:
+                current_episode_length = self.max_steps_per_episode
+            
+            for step in range(current_episode_length):
                 # Choose action
                 action = self.agent.act(state, training=True)
                 
@@ -205,13 +270,34 @@ class TrafficFLClient(fl.client.NumPyClient):
         print(f"📊 TRAINING COMPLETED: {completed_episodes}/{episodes} episodes")
         print(f"{'='*80}")
         
+        # Novelty Feature 2: Update performance history for adaptive LR
+        final_score = self._calculate_final_score(total_reward, total_steps, losses)
+        self.performance_history.append(final_score)
+        if len(self.performance_history) > 10:
+            self.performance_history.pop(0)  # Keep last 10 scores
+        
+        # Novelty Feature 3: Update client priority based on traffic density
+        if self.traffic_density_history:
+            avg_density = np.mean(self.traffic_density_history)
+            # Higher density = higher priority (more important to train)
+            self.client_priority = min(2.0, max(0.5, 1.0 + (avg_density / 50.0)))
+        
         final_metrics = {
             'average_reward': total_reward / max(1, completed_episodes),
             'total_reward': total_reward,
             'total_steps': total_steps,
             'average_loss': np.mean(losses) if losses else 0.0,
             'episodes': completed_episodes,
-            'final_score': self._calculate_final_score(total_reward, total_steps, losses)
+            'final_score': final_score,
+            # Include periodic transmission data
+            'periodic_data_transmissions': len(self.periodic_data_buffer),
+            'periodic_data_buffer': self.periodic_data_buffer,
+            'periodic_weights_snapshots': len(self.periodic_weights_buffer),
+            'periodic_weights_buffer': self.periodic_weights_buffer,
+            # Novelty features
+            'client_priority': self.client_priority,
+            'adaptive_lr_used': self.adaptive_lr_enabled,
+            'dynamic_episode_length': self.dynamic_episode_length
         }
         
         self._print_final_training_summary(final_metrics)
@@ -283,6 +369,26 @@ class TrafficFLClient(fl.client.NumPyClient):
     def _send_periodic_data(self, episode: int, step: int, reward: float, info: Dict):
         """Send periodic data to server every 5 seconds - Novelty Feature"""
         try:
+            # Collect current model weights (snapshot)
+            current_weights = self.get_parameters({})
+            # Convert numpy arrays to lists for JSON serialization (only store shapes and summary)
+            weights_summary = []
+            for i, w in enumerate(current_weights):
+                weights_summary.append({
+                    'layer': i,
+                    'shape': list(w.shape) if hasattr(w, 'shape') else [],
+                    'mean': float(np.mean(w)) if hasattr(w, 'mean') else 0.0,
+                    'std': float(np.std(w)) if hasattr(w, 'std') else 0.0,
+                    'min': float(np.min(w)) if hasattr(w, 'min') else 0.0,
+                    'max': float(np.max(w)) if hasattr(w, 'max') else 0.0
+                })
+            
+            # Novelty Feature 3: Track traffic density for priority calculation
+            queue_sum = sum(info.get('queue_lengths', [0]))
+            self.traffic_density_history.append(queue_sum)
+            if len(self.traffic_density_history) > 20:
+                self.traffic_density_history.pop(0)  # Keep last 20
+            
             # Collect current metrics
             current_metrics = {
                 'timestamp': datetime.now().isoformat(),
@@ -292,11 +398,24 @@ class TrafficFLClient(fl.client.NumPyClient):
                 'waiting_time': info.get('total_waiting_time', 0),
                 'queue_lengths': info.get('queue_lengths', []),
                 'gst': info.get('gst', {}),
-                'client_id': self.client_id
+                'client_id': self.client_id,
+                'model_weights_summary': weights_summary,  # Include weights summary
+                'traffic_density': queue_sum,  # Novelty Feature 3
+                'client_priority': self.client_priority  # Novelty Feature 3
             }
             
-            # Store in buffer (in real FL, this would be sent to server)
+            # Store in buffers
             self.periodic_data_buffer.append(current_metrics)
+            self.periodic_weights_buffer.append({
+                'timestamp': datetime.now().isoformat(),
+                'episode': episode,
+                'step': step,
+                'weights_summary': weights_summary
+            })
+            
+            # In true FL mode, send to server via metrics (Flower will handle transmission)
+            # The data will be included in fit() return value, which Flower sends to server
+            # For real-time transmission, we'd need a separate gRPC call (advanced feature)
             
             # Print periodic update with performance score
             if len(self.periodic_data_buffer) % 2 == 0:  # Every 10 seconds (2 transmissions)
@@ -305,16 +424,19 @@ class TrafficFLClient(fl.client.NumPyClient):
                 queue = sum(info.get('queue_lengths', [0]))
                 perf_score = max(0, min(100, 100 - (waiting / 2) - (queue * 5)))
                 
-                print(f"\n📡 [PERIODIC DATA TRANSMISSION - Every 5s]")
+                print(f"\n[PERIODIC DATA TRANSMISSION - Every 5s]")
                 print(f"   Episode: {episode}, Step: {step}")
                 print(f"   Reward: {reward:.4f}")
                 print(f"   Waiting Time: {waiting:.2f}s")
                 print(f"   Queue Length: {queue} vehicles")
-                print(f"   ⭐ Real-time Performance: {perf_score:.1f}/100")
-                print(f"   📊 Data sent to server buffer (ready for FL aggregation)")
+                print(f"   Model Weights: {len(current_weights)} layers collected")
+                print(f"   Real-time Performance: {perf_score:.1f}/100")
+                print(f"   Data sent to server buffer (ready for FL aggregation)")
+                print(f"   Total transmissions: {len(self.periodic_data_buffer)}")
                 
         except Exception as e:
-            pass  # Don't break training if transmission fails
+            print(f"[WARNING] Error in periodic data transmission: {e}")
+            # Don't break training if transmission fails
     
     def _print_episode_summary(self, episode: int, reward: float, steps: int, losses: List):
         """Print episode end summary with scores"""

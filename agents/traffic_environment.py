@@ -68,6 +68,15 @@ class SUMOTrafficEnvironment:
         
     def start_simulation(self):
         """Start SUMO simulation"""
+        # Check if already connected
+        try:
+            traci.getVersion()  # This will raise error if not connected
+            # Already connected, don't start again
+            return
+        except (traci.exceptions.FatalTraCIError, AttributeError):
+            # Not connected, proceed to start
+            pass
+        
         sumo_binary = "sumo-gui" if self.gui else "sumo"
         sumo_cmd = [
             sumo_binary,
@@ -86,7 +95,11 @@ class SUMOTrafficEnvironment:
         except Exception:
             pass
         
-        traci.start(sumo_cmd)
+        try:
+            traci.start(sumo_cmd)
+        except Exception as e:
+            print(f"[ERROR] Failed to start SUMO simulation: {e}")
+            raise
 
         # Discover traffic light and incoming edges if not provided
         try:
@@ -306,23 +319,47 @@ class SUMOTrafficEnvironment:
         
     def stop_simulation(self):
         """Stop SUMO simulation"""
-        traci.close()
+        try:
+            # Check if traci is connected before closing
+            try:
+                traci.getVersion()  # This will raise error if not connected
+                traci.close()
+            except (traci.exceptions.FatalTraCIError, AttributeError):
+                # Already closed or not connected, ignore
+                pass
+        except Exception:
+            # Ignore any errors during close
+            pass
         
     def reset(self) -> np.ndarray:
         """Reset environment and return initial state"""
         try:
+            # Check if simulation is already running
+            is_connected = False
+            try:
+                traci.getVersion()  # Check if connected
+                is_connected = True
+            except (traci.exceptions.FatalTraCIError, AttributeError):
+                is_connected = False
+            
             if self.episode_count > 0:
                 # For subsequent episodes, restart simulation properly
-                # SUMO needs to be restarted for new episodes
                 print(f"🔄 Resetting for Episode {self.episode_count + 1}...")
-                self.stop_simulation()
-                time.sleep(0.5)  # Brief pause
+                if is_connected:
+                    self.stop_simulation()
+                    time.sleep(0.5)  # Brief pause
+                # Start simulation (will handle if already started)
                 self.start_simulation()
             else:
                 # First episode - start simulation
                 self.start_simulation()
             
             self.episode_count += 1
+            self.step_count = 0
+            self.total_waiting_time = 0
+            self.total_vehicles = 0
+            self.queue_lengths = []
+            self.gst_history = []
             return self.get_state()
         except Exception as e:
             print(f"⚠️  Error in reset: {e}")
@@ -330,14 +367,24 @@ class SUMOTrafficEnvironment:
             traceback.print_exc()
             # Fallback: try to restart
             try:
-                if self.episode_count > 0:
+                # Ensure connection is closed before restarting
+                try:
+                    traci.getVersion()
                     self.stop_simulation()
-                    time.sleep(1)
+                except:
+                    pass
+                time.sleep(1)
                 self.start_simulation()
                 self.episode_count += 1
+                self.step_count = 0
+                self.total_waiting_time = 0
+                self.total_vehicles = 0
+                self.queue_lengths = []
+                self.gst_history = []
                 return self.get_state()
             except Exception as e2:
                 print(f"❌ Failed to reset environment: {e2}")
+                # Return zero state as fallback
                 return np.zeros(self.state_size)
         
     def get_state(self) -> np.ndarray:

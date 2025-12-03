@@ -54,19 +54,36 @@ class TrafficFLServer:
         parameters = [result[0] for result in results]
         metrics = [result[2] for result in results]
         
+        # Extract periodic data from metrics (novelty feature)
+        periodic_data_all = []
+        for metric in metrics:
+            if 'periodic_data_buffer' in metric:
+                periodic_data_all.extend(metric['periodic_data_buffer'])
+        
         # Weighted average of parameters
         aggregated_parameters = self._weighted_average_parameters(parameters, metrics)
         
         # Aggregate metrics
         aggregated_metrics = self._aggregate_metrics(metrics)
         
+        # Add periodic data to server metrics
+        aggregated_metrics['periodic_data_received'] = len(periodic_data_all)
+        aggregated_metrics['periodic_data_samples'] = periodic_data_all[:10]  # Store first 10 samples
+        
         # Store metrics
         self.server_metrics.append({
             'round': server_round,
             'type': 'fit',
             'metrics': aggregated_metrics,
+            'periodic_data_count': len(periodic_data_all),
             'timestamp': datetime.now().isoformat()
         })
+        
+        # Print periodic data summary
+        if periodic_data_all:
+            print(f"\n[SERVER] Received {len(periodic_data_all)} periodic data transmissions from clients")
+            print(f"   Latest transmission: {periodic_data_all[-1].get('timestamp', 'N/A')}")
+            print(f"   Client: {periodic_data_all[-1].get('client_id', 'N/A')}")
         
         return aggregated_parameters, aggregated_metrics
     
@@ -99,12 +116,17 @@ class TrafficFLServer:
     
     def _weighted_average_parameters(self, parameters_list: List, 
                                    metrics_list: List) -> List[np.ndarray]:
-        """Calculate weighted average of model parameters"""
+        """Weighted average with client priority (Novelty Feature 3)"""
         if not parameters_list:
             return []
         
-        # Use number of training steps as weights
-        weights = [metrics.get('total_steps', 1) for metrics in metrics_list]
+        # Novelty Feature 3: Use client priority + training steps as weights
+        weights = []
+        for metrics in metrics_list:
+            base_weight = metrics.get('total_steps', 1)
+            priority = metrics.get('client_priority', 1.0)  # Default priority = 1.0
+            weights.append(base_weight * priority)  # Higher priority = more weight
+        
         total_weight = sum(weights)
         
         if total_weight == 0:
